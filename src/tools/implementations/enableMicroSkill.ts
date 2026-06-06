@@ -10,6 +10,15 @@ export const enableMicroSkillTool: AgentTool<z.output<typeof argsSchema>> = {
   schema: argsSchema,
   execute: async (args, context) => {
     const name = args.name ?? args.id ?? '';
-    return (await enableSkill(context.store, name)) ? `Enabled ${name}` : `Skill ${name} not found`;
+    try {
+      return (await enableSkill(context.store, name, {
+        httpAllowedOrigins: context.httpAllowedOrigins ?? [],
+        httpTimeoutMs: context.httpTimeoutMs ?? 10000,
+        httpMaxRequestBytes: context.httpMaxRequestBytes ?? 131072,
+        httpMaxResponseBytes: context.httpMaxResponseBytes ?? 1048576,
+      })) ? `Enabled ${name}` : `Skill ${name} not found`;
+    } catch (error) {
+      return `Skill ${name} not enabled: ${error instanceof Error ? error.message : String(error)}`;
+    }
   },
 };

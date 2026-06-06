@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { FileStore } from '../memory/fileStore';
 import { AgentScheduler } from '../scheduler/scheduler';
+import type { McpManager } from '../integrations/mcp/manager';
+import type { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ChatMessage } from '../telegram/telegramTypes';
 
 export type ToolContext = {
@@ -13,6 +15,8 @@ export type ToolContext = {
   httpMaxRequestBytes?: number;
   httpMaxResponseBytes?: number;
   currentMessage?: ChatMessage;
+  trustedSkills?: TrustedSkillPromptInfo[];
+  mcp?: McpManager;
 };
 
 export type AgentTool<TArgs = any> = {

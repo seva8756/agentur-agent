@@ -5,8 +5,10 @@ export const cronActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('send_static_message'), text: z.string().min(1) }),
   z.object({ type: z.literal('ask_agent_and_send'), prompt: z.string().min(1) }),
   z.object({
-    type: z.literal('run_micro_skill'),
+    type: z.literal('run_skill_tool'),
     skillId: z.string().min(1),
+    toolName: z.string().min(1),
+    args: z.record(z.unknown()).default({}),
     text: z.string().min(1).optional(),
     sendResult: z.boolean().default(true),
   }),
@@ -18,6 +20,7 @@ export const cronJobSchema = z.object({
   enabled: z.boolean().default(false),
   cron: z.string().refine((value) => cron.validate(value), 'Invalid cron expression'),
   timezone: z.string().min(1),
+  threadId: z.number().int().positive().nullable().optional().default(null),
   action: cronActionSchema,
   createdAt: z.string(),
 });
@@ -29,6 +32,7 @@ export type CronJobConfig = {
   enabled: boolean;
   cron: string;
   timezone: string;
+  threadId?: number | null;
   action: z.output<typeof cronActionSchema>;
   createdAt: string;
 };

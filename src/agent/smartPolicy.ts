@@ -2,7 +2,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { readMood } from '../memory/moodDiary';
-import { formatMessageAuthor, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
+import { DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS, formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
 import { ChatMessage } from '../telegram/telegramTypes';
 import { logger } from '../utils/logger';
 
@@ -20,7 +20,7 @@ export async function decideSmartReply(
 
   const mood = await readMood(store);
   const recent = selectRecentForContext(await readRecentMessages(store), 12)
-    .map((item) => `${formatMessageAuthor(item)}: ${item.text}`)
+    .map((item) => formatRecentMessageForContext(item, DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS))
     .join('\n');
   const messages: ChatCompletionMessageParam[] = [
     {

@@ -1,0 +1,28 @@
+{
+  "id": "mcp",
+  "title": "MCP",
+  "whenToUse": "Use when the user asks to inspect or act through MCP servers connected in this chat, such as GitLab, GitHub, Figma, docs, issue trackers, repositories, or other external tools exposed through MCP.",
+  "enabled": true,
+  "runtime": "native",
+  "source": "system",
+  "version": 1,
+  "triggers": [],
+  "tools": {
+    "mcp_list_servers": {
+      "description": "List MCP servers enabled for this agent."
+    },
+    "mcp_list_tools": {
+      "description": "List allowlisted MCP tools from one server or all enabled servers."
+    },
+    "mcp_call_tool": {
+      "description": "Call an allowlisted MCP tool on an allowlisted MCP server."
+    },
+    "mcp_read_resource": {
+      "description": "Read an allowlisted MCP resource URI from an allowlisted MCP server."
+    }
+  },
+  "permissions": {
+    "mcp": true
+  },
+  "createdAt": "2026-06-03T00:00:00.000Z"
+}

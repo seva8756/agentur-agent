@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AppConfig } from '../config';
+import { McpManager } from '../integrations/mcp/manager';
 import { LlmAdapter } from '../llm/types';
 import { FileStore, initializeDataDir } from '../memory/fileStore';
 import { AgentScheduler } from '../scheduler/scheduler';
 import { loadEnabledSkills } from '../skills/loader';
-import { runSkill } from '../skills/runtime';
+import { SkillRunResult, textSkillResult } from '../skills/result';
+import { runSkillTool } from '../skills/runtime';
+import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ToolRegistry } from '../tools/registry';
 import { generateAgentReply } from './respond';
 
@@ -22,7 +25,9 @@ export class ChatRuntimeManager {
     private readonly config: AppConfig,
     public readonly llm: LlmAdapter,
     public readonly tools: ToolRegistry,
-    private readonly sendMessage: (chatId: string, text: string) => Promise<void>,
+    private readonly sendMessage: (chatId: string, result: SkillRunResult, threadId?: number | null) => Promise<void>,
+    public readonly trustedSkills: TrustedSkillPromptInfo[] = [],
+    public readonly mcp?: McpManager,
   ) {}
 
   isChatAllowed(chatId: string): boolean {
@@ -42,7 +47,7 @@ export class ChatRuntimeManager {
     await initializeDataDir(store);
     const runtime: { scheduler?: AgentScheduler } = {};
     const scheduler = new AgentScheduler(store, {
-      sendMessage: async (text) => this.sendMessage(chatId, text),
+      sendMessage: async (text, threadId) => this.sendMessage(chatId, text, threadId),
       askAgent: async (prompt): Promise<string> =>
         generateAgentReply({
           input: prompt,
@@ -58,18 +63,23 @@ export class ChatRuntimeManager {
             httpTimeoutMs: this.config.skillHttpTimeoutMs,
             httpMaxRequestBytes: this.config.skillHttpMaxRequestBytes,
             httpMaxResponseBytes: this.config.skillHttpMaxResponseBytes,
+            trustedSkills: this.trustedSkills,
+            mcp: this.mcp,
           },
         }),
-      runMicroSkill: async (skillId, text) => {
+      runSkillTool: async (skillId, toolName, args, text, threadId) => {
         const skills = await loadEnabledSkills(store);
         const skill = skills.find((candidate) => candidate.id === skillId);
-        if (!skill) return `Навык не найден или не включён: ${skillId}`;
-        return runSkill(
+        if (!skill) return textSkillResult(`Навык не найден или не включён: ${skillId}`);
+        return runSkillTool(
           store,
           skill,
+          toolName,
+          args,
           {
             messageId: Date.now(),
             chatId,
+            threadId: threadId ?? undefined,
             chatType: 'group',
             text,
             date: new Date(),
@@ -81,6 +91,9 @@ export class ChatRuntimeManager {
             httpTimeoutMs: this.config.skillHttpTimeoutMs,
             httpMaxRequestBytes: this.config.skillHttpMaxRequestBytes,
             httpMaxResponseBytes: this.config.skillHttpMaxResponseBytes,
+            mcp: this.mcp,
+            mcpTimeoutMs: this.config.mcpTimeoutMs,
+            mcpMaxResponseBytes: this.config.mcpMaxResponseBytes,
           },
         );
       },
@@ -96,7 +109,6 @@ export class ChatRuntimeManager {
   async loadKnownRuntimes(): Promise<void> {
     if (this.config.telegramAllowedChatId) {
       await this.getRuntime(this.config.telegramAllowedChatId);
-      return;
     }
 
     const chatsDir = path.join(this.config.agentDataDir, 'chats');
@@ -113,7 +125,6 @@ export class ChatRuntimeManager {
   }
 
   getChatDataDir(chatId: string): string {
-    if (this.config.telegramAllowedChatId) return this.config.agentDataDir;
     return path.join(this.config.agentDataDir, 'chats', encodeChatDir(chatId));
   }
 }

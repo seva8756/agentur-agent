@@ -1,5 +1,4 @@
 import { ChatMessage } from '../telegram/telegramTypes';
-import { extractItemAfterPhrase } from './matcher';
 import { MicroSkill } from './schema';
 
 export type TemplateVars = Record<string, unknown>;
@@ -9,8 +8,7 @@ export function buildTemplateVars(
   message: ChatMessage,
   extra: TemplateVars = {},
 ): TemplateVars {
-  const phrases = skill.trigger.type === 'message_contains' ? skill.trigger.phrases : [];
-  const item = extractItemAfterPhrase(message.text, phrases) || message.text;
+  const item = extractCommandArgs(message.text) || message.text;
   return {
     text: message.text,
     item,
@@ -22,6 +20,12 @@ export function buildTemplateVars(
     isoDate: new Date().toISOString(),
     ...extra,
   };
+}
+
+function extractCommandArgs(text: string): string {
+  const trimmed = text.trim();
+  const firstSpaceIndex = trimmed.search(/\s/);
+  return firstSpaceIndex >= 0 ? trimmed.slice(firstSpaceIndex).trim() : '';
 }
 
 export function renderTemplate(template: string, vars: TemplateVars): string {

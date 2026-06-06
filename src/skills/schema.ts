@@ -1,58 +1,48 @@
 import { z } from 'zod';
 
-export const triggerSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('message_contains'), phrases: z.array(z.string().min(1)).min(1) }),
-  z.object({ type: z.literal('command'), command: z.string().min(1) }),
-]);
+const toolNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/i);
 
-export const httpMethodSchema = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+export const triggerSchema = z.object({
+  type: z.literal('command'),
+  command: z.string().min(1),
+  tool: toolNameSchema,
+});
 
-export const atomicActionSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('append_to_list'),
-    listName: z.string().regex(/^[a-z0-9_-]+$/i),
-    itemExtractionHint: z.string().min(1),
-    confirmationText: z.string().optional(),
-  }),
-  z.object({ type: z.literal('remember_fact'), extractionHint: z.string().min(1) }),
-  z.object({ type: z.literal('save_decision'), extractionHint: z.string().min(1) }),
-  z.object({ type: z.literal('reply_static'), text: z.string().min(1) }),
-  z.object({
-    type: z.literal('reply_template'),
-    template: z.string().min(1),
-  }),
-  z.object({
-    type: z.literal('http_request'),
-    method: httpMethodSchema.default('GET'),
-    url: z.string().url(),
-    headers: z.record(z.string()).optional(),
-    bodyTemplate: z.string().optional(),
-    responseTemplate: z.string().optional(),
-    confirmationText: z.string().optional(),
-  }),
-]);
+export const skillToolSchema = z.object({
+  description: z.string().min(1).max(1000),
+  schema: z.record(z.unknown()).optional().default({ type: 'object', properties: {} }),
+});
 
-export const actionSchema = z.union([
-  atomicActionSchema,
-  z.object({ type: z.literal('chain'), actions: z.array(atomicActionSchema).min(1).max(8) }),
-]);
+export const skillPermissionsSchema = z.object({
+  httpOrigins: z.array(z.string().url()).default([]),
+  storage: z.boolean().default(true),
+  secrets: z.array(z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/)).default([]),
+});
 
-export const microSkillSchema = z.object({
+export const skillPackageManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9_-]+$/i),
   title: z.string().min(1),
+  whenToUse: z.string().min(1).max(1000),
   enabled: z.boolean().default(false),
-  trigger: triggerSchema,
-  action: actionSchema,
+  runtime: z.enum(['quickjs', 'native']).default('quickjs'),
+  source: z.enum(['chat_generated', 'system']).default('chat_generated'),
+  version: z.number().int().positive().default(1),
+  triggers: z.array(triggerSchema).default([]),
+  tools: z.record(toolNameSchema, skillToolSchema).refine((tools) => Object.keys(tools).length > 0, 'At least one tool is required'),
+  permissions: skillPermissionsSchema.default({ httpOrigins: [], storage: true, secrets: [] }),
   createdAt: z.string(),
 });
 
-export type MicroSkill = {
-  id: string;
-  title: string;
-  enabled: boolean;
-  trigger: z.output<typeof triggerSchema>;
-  action: z.output<typeof actionSchema>;
-  createdAt: string;
-};
-export type SkillAction = z.output<typeof actionSchema>;
-export type AtomicSkillAction = z.output<typeof atomicActionSchema>;
+export const skillPackageSchema = skillPackageManifestSchema.extend({
+  skillMd: z.string().default(''),
+  pluginJs: z.string().min(1),
+});
+
+export type SkillTrigger = z.output<typeof triggerSchema>;
+export type SkillPackageManifest = z.output<typeof skillPackageManifestSchema>;
+export type SkillPackage = z.output<typeof skillPackageSchema>;
+export type MicroSkill = SkillPackage;
+
+export function skillSecrets(skill: SkillPackage): string[] {
+  return skill.permissions.secrets;
+}

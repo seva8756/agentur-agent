@@ -2,7 +2,8 @@ import { AppConfig } from '../config';
 import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { loadEnabledSkills } from '../skills/loader';
-import { AtomicSkillAction, MicroSkill, SkillAction } from '../skills/schema';
+import { SkillPackage } from '../skills/schema';
+import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ToolRegistry } from '../tools/registry';
 import { ToolContext } from '../tools/types';
 import { buildChatContext, trimMessagesToBudget } from './contextBuilder';
@@ -22,10 +23,12 @@ export async function generateAgentReply(params: {
   const context = await buildChatContext(params.store, params.input, {
     maxChars: params.config.contextMaxChars,
     recentLimit: params.config.recentMessagesContextLimit,
+    recentMessageMaxChars: params.config.recentMessageContextMaxChars,
     factsMaxChars: params.config.factsMaxChars,
     timezone: params.config.agentTimezone,
+    currentThreadId: params.toolContext.currentMessage?.threadId,
   });
-  const skillsContext = await buildEnabledSkillsContext(params.store);
+  const skillsContext = await buildEnabledSkillsContext(params.store, params.toolContext.trustedSkills ?? []);
   const baseMessages = skillsContext
     ? [...context.slice(0, -1), { role: 'system' as const, content: skillsContext }, context[context.length - 1]]
     : context;
@@ -34,27 +37,40 @@ export async function generateAgentReply(params: {
   return limitOutput(text || 'Не нашёл, что ответить.', params.config.agentMaxReplyChars);
 }
 
-async function buildEnabledSkillsContext(store: FileStore): Promise<string> {
+async function buildEnabledSkillsContext(store: FileStore, trustedSkills: TrustedSkillPromptInfo[]): Promise<string> {
   const skills = await loadEnabledSkills(store);
-  if (!skills.length) return '';
+  if (!skills.length && !trustedSkills.length) return '';
   return [
-    'Enabled micro-skills available for semantic execution.',
-    'If the user asks for something that matches a skill, call `execute_micro_skill` directly; do not tell the user to type the skill command.',
-    'Use a skill only when its title/name/action clearly fits the user request.',
+    'Enabled skill inventory for semantic selection.',
+    'Use this inventory only to choose likely skills. It is intentionally compact: id, title, when_to_use, and slash command triggers.',
+    'For chat-generated skills, if the user request matches an inventory item, first call `list_skill_packages` with that skill id/title to fetch full SKILL.md, triggers, tool names, and tool descriptions; then call `run_skill_tool` with the concrete skill and tool.',
+    'Trusted native skill tools are available as direct tools; call their concrete tool names directly instead of `run_skill_tool`.',
+    'Use skill tools only when the title or when_to_use clearly fits the user request.',
+    'If multiple skill tools are needed, call each relevant tool and compose the final answer from their structured results.',
+    'A skill result with reply=null means the tool completed but has nothing to say; do not treat it as an error.',
+    'A skill result with data is machine-readable context for later tool calls.',
+    'A skill result with send means the bot can send media/file directly; do not rewrite it as a plain Markdown link unless the tool reports an error.',
+    ...trustedSkills.map(formatTrustedSkillForPrompt),
     ...skills.map(formatSkillForPrompt),
   ].join('\n');
 }
 
-function formatSkillForPrompt(skill: MicroSkill): string {
-  const trigger = skill.trigger.type === 'command'
-    ? `command /${skill.trigger.command.replace(/^\//, '')}`
-    : `contains ${skill.trigger.phrases.map((phrase) => JSON.stringify(phrase)).join(', ')}`;
-  return `- name=${skill.id}; title=${skill.title}; trigger=${trigger}; actions=${formatActionTypes(skill.action)}`;
+function formatTrustedSkillForPrompt(skill: TrustedSkillPromptInfo): string {
+  const whenToUse = skill.manifest.whenToUse ?? 'not specified';
+  return `- trusted_skill=${skill.manifest.id}; title=${skill.manifest.title}; when_to_use=${whenToUse}; runtime=native`;
 }
 
-function formatActionTypes(action: SkillAction): string {
-  const actions: AtomicSkillAction[] = action.type === 'chain' ? action.actions : [action];
-  return actions.map((item) => item.type).join(' -> ');
+function formatSkillForPrompt(skill: SkillPackage): string {
+  const triggers = formatCompactTriggers(skill);
+  return `- skill=${skill.id}; title=${skill.title}; when_to_use=${skill.whenToUse}; triggers=${triggers}`;
+}
+
+function formatCompactTriggers(skill: SkillPackage): string {
+  if (!skill.triggers.length) return 'none';
+  const values = skill.triggers.flatMap((trigger) => {
+    return [`/${trigger.command.replace(/^\//, '')}`];
+  });
+  return values.slice(0, 6).join(', ');
 }
 
 async function chatWithImageFallback(
@@ -89,8 +105,10 @@ async function chatWithImageFallback(
       {
         maxChars: params.config.contextMaxChars,
         recentLimit: params.config.recentMessagesContextLimit,
+        recentMessageMaxChars: params.config.recentMessageContextMaxChars,
         factsMaxChars: params.config.factsMaxChars,
         timezone: params.config.agentTimezone,
+        currentThreadId: params.toolContext.currentMessage?.threadId,
       },
     );
     const fallbackMessages = trimMessagesToBudget(fallbackContext, params.config.contextMaxChars);

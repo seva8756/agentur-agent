@@ -14,7 +14,7 @@ const argsSchema = z.object({
 export const createCronJobTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'create_cron_job',
   description:
-    'Create a disabled cron reminder draft from natural language. Use ASCII id with cron_ prefix if possible; if unsure omit id. The action must be an object. Supported actions: send_static_message, ask_agent_and_send, run_micro_skill with skillId/text/sendResult. User enables it with /agentur cron enable <id>.',
+    'Create a disabled cron reminder draft from natural language. Use ASCII id with cron_ prefix if possible; if unsure omit id. The action must be an object. Supported actions: send_static_message, ask_agent_and_send, run_skill_tool with skillId/toolName/args/text/sendResult. User enables it with /agentur cron enable <id>.',
   schema: argsSchema,
   execute: async (args, context) => {
     if (!context.scheduler) return 'Scheduler is not available';
@@ -24,6 +24,7 @@ export const createCronJobTool: AgentTool<z.output<typeof argsSchema>> = {
       title: args.title,
       cron: args.cron,
       timezone: args.timezone ?? context.timezone,
+      threadId: context.currentMessage?.threadId ?? null,
       action: args.action,
       enabled: false,
       createdAt: new Date().toISOString(),

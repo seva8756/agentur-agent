@@ -46,6 +46,7 @@ const envSchema = z.object({
   TELEGRAM_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(5242880),
   CONTEXT_MAX_CHARS: z.coerce.number().int().positive().default(14000),
   RECENT_MESSAGES_CONTEXT_LIMIT: z.coerce.number().int().positive().default(30),
+  RECENT_MESSAGE_CONTEXT_MAX_CHARS: z.coerce.number().int().positive().default(500),
   RECENT_MESSAGES_FILE_LIMIT: z.coerce.number().int().positive().default(300),
   MESSAGES_TO_SUMMARIZE_ON_ROTATION: z.coerce.number().int().positive().default(200),
   SUMMARY_MAX_CHARS: z.coerce.number().int().positive().default(3000),
@@ -56,6 +57,9 @@ const envSchema = z.object({
   SKILL_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   SKILL_HTTP_MAX_REQUEST_BYTES: z.coerce.number().int().positive().default(131072),
   SKILL_HTTP_MAX_RESPONSE_BYTES: z.coerce.number().int().positive().default(1048576),
+  MCP_ENABLED: booleanFromString.default('false'),
+  MCP_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
+  MCP_MAX_RESPONSE_BYTES: z.coerce.number().int().positive().default(262144),
 });
 
 export type AppConfig = ReturnType<typeof loadConfig>;
@@ -87,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     telegramImageMaxBytes: v.TELEGRAM_IMAGE_MAX_BYTES,
     contextMaxChars: v.CONTEXT_MAX_CHARS,
     recentMessagesContextLimit: v.RECENT_MESSAGES_CONTEXT_LIMIT,
+    recentMessageContextMaxChars: v.RECENT_MESSAGE_CONTEXT_MAX_CHARS,
     recentMessagesFileLimit: v.RECENT_MESSAGES_FILE_LIMIT,
     messagesToSummarizeOnRotation: v.MESSAGES_TO_SUMMARIZE_ON_ROTATION,
     summaryMaxChars: v.SUMMARY_MAX_CHARS,
@@ -97,5 +102,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     skillHttpTimeoutMs: v.SKILL_HTTP_TIMEOUT_MS,
     skillHttpMaxRequestBytes: v.SKILL_HTTP_MAX_REQUEST_BYTES,
     skillHttpMaxResponseBytes: v.SKILL_HTTP_MAX_RESPONSE_BYTES,
+    mcpEnabled: v.MCP_ENABLED,
+    mcpTimeoutMs: v.MCP_TIMEOUT_MS,
+    mcpMaxResponseBytes: v.MCP_MAX_RESPONSE_BYTES,
   };
 }

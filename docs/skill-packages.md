@@ -1,0 +1,458 @@
+# Skills Guide
+
+Этот документ фиксирует актуальный контракт chat-local skills, чтобы не держать детали только в голове или в prompt descriptions.
+
+## Идея
+
+Навык — это локальный skill внутри конкретного Telegram-чата. Технически он хранится как папка с `skill.json`, `SKILL.md` и `plugin.js`, но в интерфейсе и ответах пользователю называем его просто навыком.
+
+Для привилегированных интеграций вроде MCP используйте не chat-generated skills, а trusted skills из `skills/catalog/`. Пример: [trusted-mcp-skill-example.md](trusted-mcp-skill-example.md).
+
+Trusted skills исполняются native-кодом без QuickJS sandbox и включаются приложением, а не создаются агентом из чата. Первый такой skill: `skills/catalog/mcp`.
+
+Структура:
+
+```text
+data/chats/<chat>/skills/drafts/<skill_id>/
+  skill.json
+  SKILL.md
+  plugin.js
+
+data/chats/<chat>/skills/enabled/<skill_id>/
+  skill.json
+  SKILL.md
+  plugin.js
+```
+
+`drafts` — черновики, которые агент может создавать и править.
+`enabled` — live-копии, которые реально исполняет runtime.
+
+Чтобы draft стал live:
+
+```text
+/agentur skill enable <skill_id>
+```
+
+Enable делает validation/dry-run и копирует draft в enabled.
+
+## skill.json
+
+Минимальный manifest:
+
+```json
+{
+  "id": "shopping_list",
+  "title": "Shopping List",
+  "enabled": false,
+  "runtime": "quickjs",
+  "source": "chat_generated",
+  "version": 1,
+  "triggers": [
+    {
+      "type": "command",
+      "command": "/add_product",
+      "tool": "add_item"
+    }
+  ],
+  "tools": {
+    "add_item": {
+      "description": "Add item to shopping list",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "item": { "type": "string" }
+        }
+      }
+    },
+    "list_items": {
+      "description": "Show shopping list",
+      "schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  "permissions": {
+    "httpOrigins": [],
+    "storage": true,
+    "secrets": []
+  },
+  "createdAt": "2026-06-03T00:00:00.000Z"
+}
+```
+
+Правила:
+
+- `runtime` сейчас всегда `"quickjs"`;
+- `tools` должен содержать хотя бы один tool;
+- `triggers` по умолчанию должен быть `[]`;
+- прямые triggers поддерживают только явные slash-команды, например `/balance`;
+- command-trigger нужен для детерминированных повторяемых shortcut-операций, а не для любого skill;
+- каждый trigger обязан ссылаться на существующий tool;
+- natural-language активация идет через `whenToUse` и semantic selection, а не через phrase/keyword triggers;
+- `httpOrigins` должны быть точными origins, например `https://openrouter.ai`;
+- secrets нужно объявлять явно.
+
+Примеры:
+
+- хороший command trigger: `/denis_tasks` всегда собирает конкретный отчет;
+- хороший semantic-only skill: GitLab helper с `triggers: []` и точным `whenToUse`;
+- плохой command trigger: `/gitlab`, если внутри skill сам угадывает, что пользователь хотел сделать.
+
+## SKILL.md
+
+`SKILL.md` описывает, когда и как использовать skill. Он попадает модели в context для enabled skills.
+
+Пишите коротко:
+
+```md
+Используй `add_item`, когда пользователь просит добавить покупку.
+Используй `list_items`, когда пользователь спрашивает текущий список покупок.
+Не используй навык для задач, не связанных со списком покупок.
+```
+
+## plugin.js
+
+Контракт:
+
+```js
+export default {
+  tools: {
+    async tool_name(ctx, args) {
+      return { ok: true, reply: "Готово." };
+    }
+  }
+};
+```
+
+SDK доступен только через `ctx.api`. Не используйте третий аргумент `api`.
+
+Нормальный пример:
+
+```js
+export default {
+  tools: {
+    async add_item(ctx, args) {
+      const item = String(args.item || ctx.item || "").trim();
+      if (!item) return { ok: true, reply: "Что добавить?" };
+
+      await ctx.api.lists.append("shopping", item);
+      return { ok: true, reply: "Добавил: " + item };
+    },
+
+    async list_items(ctx, args) {
+      const items = await ctx.api.lists.list("shopping");
+      if (!items.length) return { ok: true, reply: "Список пуст." };
+      return {
+        ok: true,
+        reply: items.map((item, index) => (index + 1) + ". " + item.text).join("\n")
+      };
+    }
+  }
+};
+```
+
+## ctx
+
+`ctx` содержит сообщение и окружение:
+
+```js
+ctx.text          // полный текст сообщения
+ctx.item          // текст после slash-command
+ctx.now           // ISO timestamp
+ctx.user.id
+ctx.user.username
+ctx.user.displayName
+ctx.chat.id
+ctx.chat.type
+ctx.message.id
+ctx.message.date
+ctx.api           // SDK
+```
+
+`ctx.item` удобен для command-trigger:
+
+- сообщение: `/todo купить молоко`;
+- `ctx.item`: `купить молоко`.
+
+Для semantic calls через `run_skill_tool` используйте `args`; `ctx.item` может быть пустым или равным аргументам команды только при прямом slash-trigger.
+
+## args
+
+`args` приходит из LLM tool call через `run_skill_tool`.
+
+Если tool вызван прямым trigger без LLM, обычно `args` будет `{}`.
+
+Паттерн:
+
+```js
+const value = args.value || ctx.item || ctx.text;
+```
+
+## SDK
+
+### Storage
+
+Scoped per skill, файл `skills/state/<skill_id>.json`.
+
+```js
+const value = ctx.api.storage.get("key");
+ctx.api.storage.set("key", value);
+ctx.api.storage.delete("key");
+```
+
+`storage` синхронный.
+
+### Lists
+
+Chat-level списки в `chat/lists/*.json`.
+
+```js
+const items = await ctx.api.lists.list("shopping");
+await ctx.api.lists.append("shopping", "milk");
+await ctx.api.lists.clear("shopping");
+```
+
+### Memory
+
+```js
+await ctx.api.memory.rememberFact("Пользователь любит короткие ответы.");
+await ctx.api.memory.saveDecision("Решили проверять отчеты по пятницам.");
+```
+
+### Secrets
+
+Только объявленные в `skill.json` secrets доступны skill.
+
+```js
+const token = ctx.api.secrets.get("OPENROUTER_API_KEY");
+if (!token) return { ok: true, reply: "Нужен секрет OPENROUTER_API_KEY." };
+```
+
+`secrets` синхронные.
+
+### HTTP
+
+```js
+const res = await ctx.api.http.get("https://example.com/api", {
+  headers: { Authorization: "Bearer " + token }
+});
+
+const created = await ctx.api.http.post("https://example.com/items", {
+  title: "Item"
+});
+
+const patched = await ctx.api.http.patch("https://example.com/items/1", {
+  title: "Updated"
+});
+
+const removed = await ctx.api.http.delete("https://example.com/items/1");
+
+const custom = await ctx.api.http.request({
+  method: "PUT",
+  url: "https://example.com/items/1",
+  headers: { "content-type": "application/json" },
+  body: { title: "Updated" }
+});
+```
+
+HTTP response:
+
+```js
+res.ok
+res.status
+res.statusText
+res.headers
+res.text
+res.body
+res.json
+res.url
+```
+
+HTTP проходит через safe layer:
+
+- только `http/https`;
+- origin должен быть в `skill.json.permissions.httpOrigins`;
+- origin должен быть разрешен глобально в `SKILL_HTTP_ALLOWED_ORIGINS`;
+- localhost/private IP запрещены;
+- redirects проверяются;
+- есть timeout и лимиты request/response body.
+
+### MCP
+
+Обычные chat skills могут использовать только уже подключенные MCP servers этого чата:
+
+```js
+const servers = await ctx.api.mcp.listServers();
+const tools = await ctx.api.mcp.listTools("my_gitlab");
+const result = await ctx.api.mcp.callTool("my_gitlab", "list_merge_requests", {
+  assignee: "me"
+});
+```
+
+Доступные методы:
+
+- `ctx.api.mcp.listServers()`;
+- `ctx.api.mcp.listTools(serverId?)`;
+- `ctx.api.mcp.callTool(serverId, toolName, args)`;
+- `ctx.api.mcp.readResource(serverId, uri)`.
+
+Нельзя подключать servers из `plugin.js`: нет `connect`, `spawn`, `setHeader`, `setSecret`. Подключение делается командами `/agentur mcp ...`, а исполнение всегда идет через trusted `McpManager`.
+
+### Log
+
+```js
+ctx.api.log("step=loaded");
+```
+
+Logs попадают в `skills/audit/<skill_id>.jsonl`.
+
+### Sleep
+
+```js
+await ctx.api.sleep(500);
+```
+
+Sleep ограничен, не используйте его для долгих процессов.
+
+## Result Contract
+
+Tool должен вернуть объект:
+
+```js
+return {
+  ok: true,
+  reply: "текст",
+  data: { any: "json" },
+  send: undefined,
+  error: undefined
+};
+```
+
+Поля:
+
+- `ok?: boolean`;
+- `reply?: string | null`;
+- `data?: any`;
+- `send?: media payload`;
+- `error?: { code: string, message: string }`.
+
+Примеры:
+
+```js
+return { ok: true, reply: "Готово." };
+return { ok: true, reply: null };
+return { ok: true, data: { count: 3 }, reply: "Нашел 3 элемента." };
+return { ok: false, error: { code: "missing_secret", message: "OPENROUTER_API_KEY не задан" } };
+```
+
+`reply: null` значит: tool завершился успешно, но в чат отвечать нечего.
+
+Media:
+
+```js
+return {
+  ok: true,
+  reply: "Документ готов.",
+  send: {
+    kind: "document",
+    url: "https://cdn.example.com/report.pdf",
+    caption: "Отчет",
+    filename: "report.pdf"
+  }
+};
+```
+
+Поддерживаются `message`, `photo`, `document`, `video`. URL должен быть публичным `http/https`, не localhost/private IP.
+
+## Forbidden
+
+В `plugin.js` нельзя:
+
+- `require`;
+- `import`;
+- `process`;
+- `fs`;
+- `child_process`;
+- direct `fetch`;
+- `XMLHttpRequest`;
+- `WebSocket`;
+- `Worker`;
+- `eval`;
+- `Function`;
+- бесконечные циклы вида `while(true)` и `for(;;)`;
+- Node.js APIs.
+
+## HTTP Skill Example
+
+```js
+export default {
+  tools: {
+    async openrouter_balance(ctx, args) {
+      const key = ctx.api.secrets.get("OPENROUTER_API_KEY");
+      if (!key) return { ok: true, reply: "API-ключ OpenRouter не задан." };
+
+      const res = await ctx.api.http.get("https://openrouter.ai/api/v1/key", {
+        headers: { Authorization: "Bearer " + key }
+      });
+
+      if (!res.ok) {
+        return { ok: false, error: { code: "http_error", message: "OpenRouter status " + res.status } };
+      }
+
+      const account = res.json && res.json.data ? res.json.data : {};
+      const limit = account.limit !== undefined ? account.limit : "?";
+      const usage = account.usage !== undefined ? account.usage : "?";
+
+      return {
+        ok: true,
+        reply: "Баланс OpenRouter\nЛимит: " + limit + "\nПотрачено: " + usage,
+        data: account
+      };
+    }
+  }
+};
+```
+
+Manifest permissions:
+
+```json
+{
+  "permissions": {
+    "httpOrigins": ["https://openrouter.ai"],
+    "storage": true,
+    "secrets": ["OPENROUTER_API_KEY"]
+  }
+}
+```
+
+Global `.env` must allow the origin:
+
+```env
+SKILL_HTTP_ALLOWED_ORIGINS=https://openrouter.ai
+```
+
+## Lifecycle
+
+1. Agent creates draft via `create_skill_package_draft`.
+2. User reviews files in `skills/drafts/<id>/`.
+3. User sets required secrets.
+4. User runs `/agentur skill enable <id>`.
+5. Enable validates and dry-runs the draft.
+6. Draft is copied to `skills/enabled/<id>/`.
+7. Runtime executes only enabled copy.
+8. Later draft edits require another `/agentur skill enable <id>` to go live.
+
+## Common Mistakes
+
+- Using `api.http` instead of `ctx.api.http`.
+- Using a third `api` argument: `async tool(ctx,args,api)`.
+- Reading HTTP JSON from `res.data`; use `res.json`.
+- Forgetting to declare `httpOrigins`.
+- Forgetting to allow origin in `SKILL_HTTP_ALLOWED_ORIGINS`.
+- Forgetting to declare secrets in `skill.json`.
+- Editing draft and expecting enabled copy to change automatically.
+- Returning a string instead of `{ reply: "..." }`.
+- Using `module.exports`; prefer `export default`.
+- Creating command triggers for broad/agentic skills instead of using `triggers: []` and `whenToUse`.
+- Returning raw JSON dumps or low-level integration errors as `reply`; prefer structured `data`/`error` and let the LLM compose semantic answers.

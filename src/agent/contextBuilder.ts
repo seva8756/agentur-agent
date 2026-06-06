@@ -6,7 +6,7 @@ import { listFacts } from '../memory/facts';
 import { readMood } from '../memory/moodDiary';
 import { readIdentity } from '../memory/identity';
 import { readChatSettings } from '../memory/chatSettings';
-import { formatMessageAuthor, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
+import { formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
 import { readSummary } from '../memory/summary';
 import { buildSystemPrompt } from './promptBuilder';
 import { formatLocalTime } from '../utils/time';
@@ -16,6 +16,8 @@ export type ContextOptions = {
   recentLimit: number;
   factsMaxChars: number;
   timezone: string;
+  currentThreadId?: number;
+  recentMessageMaxChars?: number;
 };
 
 export async function buildChatContext(
@@ -35,10 +37,13 @@ export async function buildChatContext(
   const factText = facts.map((f) => `- ${f.text}`).join('\n').slice(-options.factsMaxChars);
   const decisionText = decisions.map((d) => `- ${d.text}`).join('\n').slice(-options.factsMaxChars);
   const recentText = selectRecentForContext(recent, options.recentLimit)
-    .map((m) => `${formatMessageAuthor(m)}: ${m.text}`)
+    .map((m) => formatRecentMessageForContext(m, options.recentMessageMaxChars))
     .join('\n');
+  const threadNote = options.currentThreadId
+    ? `Thread=${options.currentThreadId}. Attention! Same thread is direct context; other threads may inform but are not one dialog. Keep this in mind.`
+    : '';
   const context = limitOutput(
-    [`Summary:\n${summary}`, `Facts:\n${factText}`, `Decisions:\n${decisionText}`, `Recent chat:\n${recentText}`]
+    [`Summary:\n${summary}`, `Facts:\n${factText}`, `Decisions:\n${decisionText}`, threadNote, `Recent chat:\n${recentText}`]
       .filter((s) => s.trim().length > 0)
       .join('\n\n'),
     options.maxChars,

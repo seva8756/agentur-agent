@@ -4,6 +4,7 @@ import { FileStore } from './fileStore';
 export const recentMessageSchema = z.object({
   id: z.number(),
   chatId: z.string(),
+  threadId: z.number().int().positive().optional(),
   userId: z.string().optional(),
   username: z.string().optional(),
   displayName: z.string().optional(),
@@ -15,6 +16,7 @@ export const recentMessageSchema = z.object({
 export type RecentMessage = {
   id: number;
   chatId: string;
+  threadId?: number;
   userId?: string;
   username?: string;
   displayName?: string;
@@ -22,6 +24,8 @@ export type RecentMessage = {
   date: string;
   isBot: boolean;
 };
+
+export const DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS = 500;
 
 export async function appendRecentMessage(store: FileStore, message: RecentMessage): Promise<void> {
   await store.appendJsonl(message, 'chat', 'recent.jsonl');
@@ -59,8 +63,21 @@ export function selectRecentForContext(messages: RecentMessage[], limit: number)
   return messages.slice(-limit);
 }
 
+export function formatRecentMessageForContext(
+  message: RecentMessage,
+  maxTextChars = DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS,
+): string {
+  const thread = message.threadId ? `[thread=${message.threadId}] ` : '';
+  return `${thread}${formatMessageAuthor(message)}: ${limitRecentText(message.text, maxTextChars)}`;
+}
+
 export function formatMessageAuthor(message: Pick<RecentMessage, 'displayName' | 'username' | 'userId'>): string {
   const username = message.username ? `@${message.username.replace(/^@/, '')}` : '';
   if (message.displayName && username && message.displayName !== message.username) return `${message.displayName} (${username})`;
   return message.displayName ?? username ?? message.userId ?? 'user';
+}
+
+function limitRecentText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 24)).trimEnd()}... [truncated]`;
 }

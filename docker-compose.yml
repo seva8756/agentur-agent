@@ -1,5 +1,5 @@
 services:
-  tiny-telegram-agent:
+  agentur-chat-agent:
     build: .
     env_file: .env
     volumes:

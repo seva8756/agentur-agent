@@ -1,6 +1,7 @@
 export type ChatMessage = {
   messageId: number;
   chatId: string;
+  threadId?: number;
   chatType?: 'private' | 'group' | 'supergroup' | 'channel';
   fromId?: string;
   username?: string;
@@ -13,5 +14,6 @@ export type ChatMessage = {
   };
   date: Date;
   replyToBot?: boolean;
+  quotedMessage?: { text: string; authorName?: string };
   entities?: Array<{ type: string; offset: number; length: number }>;
 };

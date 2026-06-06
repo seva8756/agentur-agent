@@ -1,14 +1,19 @@
 import { ChatMessage } from '../telegram/telegramTypes';
-import { MicroSkill } from './schema';
+import { SkillPackage } from './schema';
 
-export function matchSkill(message: ChatMessage, skills: MicroSkill[]): MicroSkill | null {
-  const text = message.text.toLowerCase();
+export type SkillMatch = {
+  skill: SkillPackage;
+  toolName: string;
+};
+
+export function matchSkill(message: ChatMessage, skills: SkillPackage[]): SkillMatch | null {
   for (const skill of skills) {
     if (!skill.enabled) continue;
-    if (skill.trigger.type === 'message_contains') {
-      if (skill.trigger.phrases.some((phrase) => text.includes(phrase.toLowerCase()))) return skill;
+    for (const trigger of skill.triggers) {
+      if (trigger.type === 'command' && matchesCommand(message.text, trigger.command)) {
+        return { skill, toolName: trigger.tool };
+      }
     }
-    if (skill.trigger.type === 'command' && matchesCommand(message.text, skill.trigger.command)) return skill;
   }
   return null;
 }
@@ -20,13 +25,4 @@ export function matchesCommand(text: string, command: string): boolean {
 
 function normalizeCommand(command: string): string {
   return command.trim().toLowerCase().replace(/^\//, '').replace(/@.+$/, '');
-}
-
-export function extractItemAfterPhrase(text: string, phrases: string[]): string {
-  const lower = text.toLowerCase();
-  for (const phrase of phrases) {
-    const index = lower.indexOf(phrase.toLowerCase());
-    if (index >= 0) return text.slice(index + phrase.length).trim().replace(/^[:,-]+\s*/, '');
-  }
-  return text.trim();
 }

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { logger } from '../utils/logger';
+import { formatLogError, logger } from '../utils/logger';
 
 export class FileStore {
   constructor(public readonly rootDir: string) {}
@@ -41,8 +41,12 @@ export class FileStore {
     try {
       const raw = await fs.readFile(this.resolve(...parts), 'utf8');
       return schema.parse(JSON.parse(raw));
-    } catch (error) {
-      logger.warn(`Could not read JSON ${parts.join('/')}, using fallback`, error);
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        logger.debug(`JSON ${parts.join('/')} is missing, using fallback`);
+      } else {
+        logger.warn(`Could not read JSON ${parts.join('/')}, using fallback`, formatLogError(error));
+      }
       return fallback;
     }
   }
@@ -72,7 +76,7 @@ export class FileStore {
         .filter(Boolean)
         .map((line) => schema.parse(JSON.parse(line)));
     } catch (error: any) {
-      if (error?.code !== 'ENOENT') logger.warn(`Could not read JSONL ${parts.join('/')}`, error);
+      if (error?.code !== 'ENOENT') logger.warn(`Could not read JSONL ${parts.join('/')}`, formatLogError(error));
       return [];
     }
   }
@@ -98,6 +102,7 @@ export async function initializeDataDir(store: FileStore): Promise<void> {
     store.ensureDir('chat', 'lists'),
     store.ensureDir('skills', 'drafts'),
     store.ensureDir('skills', 'enabled'),
+    store.ensureDir('integrations', 'mcp'),
     store.ensureDir('cron'),
   ]);
   await store.ensureJson(z.array(z.any()), [], 'chat', 'facts.json');

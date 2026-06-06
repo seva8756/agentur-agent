@@ -1,4 +1,5 @@
 import { AppConfig } from '../config';
+import { McpManager } from '../integrations/mcp/manager';
 import { generateAgentReply } from '../agent/respond';
 import { decideSmartReply } from '../agent/smartPolicy';
 import { decideReply, stripBotAddress } from '../agent/replyPolicy';
@@ -11,7 +12,9 @@ import { maybeUpdateMood } from '../memory/moodDiary';
 import { AgentScheduler } from '../scheduler/scheduler';
 import { loadEnabledSkills } from '../skills/loader';
 import { matchSkill } from '../skills/matcher';
-import { runSkill } from '../skills/runtime';
+import { SkillRunResult, textSkillResult } from '../skills/result';
+import { runSkillTool } from '../skills/runtime';
+import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ToolRegistry } from '../tools/registry';
 import { ToolContext } from '../tools/types';
 import { logger } from '../utils/logger';
@@ -24,10 +27,12 @@ export type RouterDeps = {
   store: FileStore;
   llm: LlmAdapter;
   tools: ToolRegistry;
+  trustedSkills?: TrustedSkillPromptInfo[];
+  mcp?: McpManager;
   scheduler: AgentScheduler;
 };
 
-export async function routeMessage(message: ChatMessage, deps: RouterDeps): Promise<string | null> {
+export async function routeMessage(message: ChatMessage, deps: RouterDeps): Promise<SkillRunResult | null> {
   if (deps.config.telegramAllowedChatId && message.chatId !== deps.config.telegramAllowedChatId) {
     logger.debug('Ignoring message from non-allowed chat');
     return null;
@@ -36,12 +41,12 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
 
   const settings = await readChatSettings(deps.store);
   const enabledSkills = await loadEnabledSkills(deps.store);
-  const skill = matchSkill(message, enabledSkills);
-  const decision = decideReply(message, deps.botUsername, Boolean(skill));
+  const skillMatch = matchSkill(message, enabledSkills);
+  const decision = decideReply(message, deps.botUsername, Boolean(skillMatch));
   const isCommand = /^\/agentur(?:@\w+)?(?:\s|$)/i.test(message.text.trim());
   const fullCapture = shouldCaptureFullChat(deps.config, message.chatId);
   const smartMode = settings.replyMode === 'smart';
-  const shouldPersistIncoming = fullCapture || smartMode || isCommand || Boolean(skill) || decision.shouldReply;
+  const shouldPersistIncoming = fullCapture || smartMode || isCommand || Boolean(skillMatch) || decision.shouldReply;
 
   if (shouldPersistIncoming) {
     await persistIncomingMessage(message, deps, fullCapture);
@@ -49,33 +54,43 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
     logger.info('Message ignored without storage', { chatId: message.chatId, reason: decision.reason });
   }
 
+  // Один раз строим LLM-текст: stripped + цитата (если это reply).
+  // Скиллы и команды используют message.text напрямую — им цитата не нужна.
+  const strippedText = stripBotAddress(message.text, deps.botUsername);
+  const llmInput = buildLlmInput(message, strippedText);
+
   if (isCommand) {
-    return handleAgentCommand(message.text, {
+    return textSkillResult(await handleAgentCommand(message.text, {
       store: deps.store,
       config: deps.config,
       scheduler: deps.scheduler,
       llm: deps.llm,
-    });
+      mcp: deps.mcp,
+    }));
   }
 
-  if (skill) {
-    const skillReply = await runSkill(deps.store, skill, message, {
+  if (skillMatch) {
+    const skillReply = await runSkillTool(deps.store, skillMatch.skill, skillMatch.toolName, {}, message, {
       httpAllowedOrigins: deps.config.skillHttpAllowedOrigins,
       httpTimeoutMs: deps.config.skillHttpTimeoutMs,
       httpMaxRequestBytes: deps.config.skillHttpMaxRequestBytes,
       httpMaxResponseBytes: deps.config.skillHttpMaxResponseBytes,
+      mcp: deps.mcp,
+      mcpTimeoutMs: deps.config.mcpTimeoutMs,
+      mcpMaxResponseBytes: deps.config.mcpMaxResponseBytes,
     });
     if (skillReply) return skillReply;
-    logger.info('Matched skill completed without reply', { chatId: message.chatId, skillId: skill.id });
+    logger.info('Matched skill tool completed without reply', { chatId: message.chatId, skillId: skillMatch.skill.id, toolName: skillMatch.toolName });
     return null;
   }
 
   if (!decision.shouldReply) {
     if (smartMode) {
-      const smart = await decideSmartReply(deps.store, message, deps.llm);
+      // Smart-режим тоже видит цитату — иначе "что это" без контекста непонятно
+      const smart = await decideSmartReply(deps.store, { ...message, text: llmInput }, deps.llm);
       if (smart.shouldReply) {
         logger.info('Replying to message', { chatId: message.chatId, reason: `smart:${smart.reason}` });
-        return createAgentReply(message, message.text, deps);
+        return createAgentReply(message, llmInput, strippedText, deps);
       }
       logger.info('Smart mode stayed silent', { chatId: message.chatId, reason: smart.reason });
     }
@@ -87,10 +102,19 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
   }
   logger.info('Replying to message', { chatId: message.chatId, reason: decision.reason });
 
-  return createAgentReply(message, stripBotAddress(message.text, deps.botUsername), deps);
+  return createAgentReply(message, llmInput, strippedText, deps);
 }
 
-function createAgentReply(message: ChatMessage, input: string, deps: RouterDeps): Promise<string> {
+function buildLlmInput(message: ChatMessage, strippedText: string): string {
+  if (!message.quotedMessage) return strippedText;
+  const { text, authorName } = message.quotedMessage;
+  const MAX_QUOTE = 300;
+  const truncated = text.length > MAX_QUOTE ? `${text.slice(0, MAX_QUOTE)}…` : text;
+  const attribution = authorName ? `${authorName}: ` : '';
+  return `[цитата: ${attribution}"${truncated}"]\n${strippedText}`;
+}
+
+async function createAgentReply(message: ChatMessage, llmInput: string, strippedText: string, deps: RouterDeps): Promise<SkillRunResult | null> {
   const toolContext: ToolContext = {
     store: deps.store,
     scheduler: deps.scheduler,
@@ -99,17 +123,19 @@ function createAgentReply(message: ChatMessage, input: string, deps: RouterDeps)
     httpTimeoutMs: deps.config.skillHttpTimeoutMs,
     httpMaxRequestBytes: deps.config.skillHttpMaxRequestBytes,
     httpMaxResponseBytes: deps.config.skillHttpMaxResponseBytes,
-    currentMessage: { ...message, text: input },
+    currentMessage: { ...message, text: strippedText },
+    trustedSkills: deps.trustedSkills ?? [],
+    mcp: deps.mcp,
   };
-  return generateAgentReply({
-    input,
+  return textSkillResult(await generateAgentReply({
+    input: llmInput,
     image: message.image ? { dataUrl: message.image.dataUrl } : undefined,
     config: deps.config,
     store: deps.store,
     llm: deps.llm,
     tools: deps.tools,
     toolContext,
-  });
+  }));
 }
 
 function shouldCaptureFullChat(config: AppConfig, chatId: string): boolean {
@@ -120,6 +146,7 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
   await appendRecentMessage(deps.store, {
     id: message.messageId,
     chatId: message.chatId,
+    threadId: message.threadId,
     userId: message.fromId,
     username: message.username,
     displayName: message.displayName,

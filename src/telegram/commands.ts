@@ -1,9 +1,17 @@
 import { AppConfig } from '../config';
+import {
+  ChatMcpServerConfig,
+  deleteChatMcpServer,
+  McpManager,
+  readChatMcpConfig,
+  upsertChatMcpServer,
+} from '../integrations/mcp/manager';
 import { runDoctor } from '../llm/doctor';
 import { LlmAdapter } from '../llm/types';
 import { listDecisions } from '../memory/decisions';
 import { listFacts } from '../memory/facts';
 import { FileStore } from '../memory/fileStore';
+import { readSecrets, setSecret, deleteSecret } from '../memory/secrets';
 import {
   isCensorModeEnabled,
   readChatSettings,
@@ -14,13 +22,15 @@ import {
 import { readIdentity, resetIdentity, writeIdentity } from '../memory/identity';
 import { readMood, resetMood } from '../memory/moodDiary';
 import { AgentScheduler } from '../scheduler/scheduler';
-import { loadDraftSkills, loadEnabledSkills, enableSkill, disableSkill, deleteSkill } from '../skills/loader';
+import { loadDraftSkills, loadEnabledSkills, enableSkill, disableSkill, deleteSkill, resolveSkillName, findSkill } from '../skills/loader';
+import { skillSecrets } from '../skills/schema';
 
 export type CommandDeps = {
   store: FileStore;
   config: AppConfig;
   scheduler: AgentScheduler;
   llm: LlmAdapter;
+  mcp?: McpManager;
 };
 
 const COMMAND_PREFIX = '/agentur';
@@ -37,9 +47,10 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
     const capture = deps.config.telegramFullCaptureChatIds.length
       ? deps.config.telegramFullCaptureChatIds.join(', ')
       : 'только обращения, навыки и команды';
-    return `Работаю. Область: ${scope}. Режим ответа: ${settings.replyMode}. Режим цензуры: ${formatCensorMode(isCensorModeEnabled(settings))}. Сбор контекста: ${capture}. Действия: ${deps.config.llmSupportsTools ? 'включены' : 'выключены'}.`;
+    return `Работаю.\nОбласть: ${scope}.\nРежим ответа: ${settings.replyMode}.\nРежим цензуры: ${formatCensorMode(isCensorModeEnabled(settings))}.\nСбор контекста: ${capture}.\nTool Calling: ${deps.config.llmSupportsTools ? 'включен' : 'выключен'}.`;
   }
   if (command === 'doctor') return (await runDoctor(deps.config, deps.llm)).join('\n');
+  if (command === 'mcp') return handleMcpCommand(text, parts, deps);
   if (command === 'reply-mode') return handleReplyModeCommand(parts, deps);
   if (command === 'censor-mode') return handleCensorModeCommand(parts, deps);
   if (command === 'identity') return handleIdentityCommand(text, deps);
@@ -56,6 +67,48 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
     const decisions = await listDecisions(deps.store);
     return decisions.length ? decisions.map((d) => `- ${d.text}`).join('\n') : 'Решений пока нет.';
   }
+  if (command === 'secrets') {
+    const [drafts, enabled] = await Promise.all([loadDraftSkills(deps.store), loadEnabledSkills(deps.store)]);
+    const allSkills = [...drafts, ...enabled];
+    const allSecrets = await readSecrets(deps.store);
+    
+    // Собираем все уникальные требуемые секреты из всех зарегистрированных скиллов
+    const requiredKeys = [...new Set(allSkills.flatMap((s) => skillSecrets(s)))];
+    
+    if (requiredKeys.length === 0 && Object.keys(allSecrets).length === 0) {
+      return 'Секретов в этом чате нет, и ни один навык не требует секретов.';
+    }
+    
+    const lines = ['Секреты чата:'];
+    for (const key of requiredKeys) {
+      const isSet = key in allSecrets;
+      lines.push(`- ${key}: ${isSet ? '✅ Заполнен' : '❌ Не заполнен (требуется)'}`);
+    }
+    
+    // Выведем также секреты, которые есть, но не требуются текущими навыками
+    for (const key of Object.keys(allSecrets)) {
+      if (!requiredKeys.includes(key)) {
+        lines.push(`- ${key}: ✅ Заполнен (не используется навыками)`);
+      }
+    }
+    
+    return lines.join('\n');
+  }
+  if (command === 'secret' && parts[2] === 'set' && parts[3]) {
+    const rawTail = text.trim().substring(text.indexOf('secret') + 'secret'.length).trim();
+    const setMatch = rawTail.match(/^set\s+([A-Za-z0-9_.-]+)\s+([\s\S]+)$/i);
+    if (!setMatch) {
+      return `Используйте: \`${COMMAND_PREFIX} secret set KEY VALUE\``;
+    }
+    const [, key, value] = setMatch;
+    await setSecret(deps.store, key.trim(), value.trim());
+    return `Секрет ${key.trim()} успешно сохранён.`;
+  }
+  if (command === 'secret' && parts[2] === 'delete' && parts[3]) {
+    const key = parts[3].trim();
+    const deleted = await deleteSecret(deps.store, key);
+    return deleted ? `Секрет ${key} удалён.` : `Секрет ${key} не найден.`;
+  }
   if (command === 'skills') {
     const [drafts, enabled] = await Promise.all([loadDraftSkills(deps.store), loadEnabledSkills(deps.store)]);
     return [
@@ -65,8 +118,33 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
   }
   if (command === 'skill' && parts[2] === 'enable' && parts[3]) {
     const name = commandTail(parts, 3);
-    const skill = await enableSkill(deps.store, name);
-    return skill ? `Навык включён: ${skill.id}` : `Навык не найден: ${name}`;
+    try {
+      // Ищем сам навык сначала, чтобы проверить требуемые секреты
+      const drafts = await loadDraftSkills(deps.store);
+      const enabled = await loadEnabledSkills(deps.store);
+      const targetSkill = findSkill([...drafts, ...enabled], name);
+      
+      let warnings = '';
+      const requiredSecrets = targetSkill ? skillSecrets(targetSkill) : [];
+      if (requiredSecrets.length > 0) {
+        const allSecrets = await readSecrets(deps.store);
+        const missingSecrets = requiredSecrets.filter((key) => !(key in allSecrets));
+        if (missingSecrets.length > 0) {
+          warnings = `\n\n⚠️ Внимание! Для полноценной работы навыка требуются секреты, которые еще не заполнены: ${missingSecrets.join(', ')}. Вы можете заполнить их командой:\n` +
+            missingSecrets.map((key) => `/agentur secret set ${key} <значение>`).join('\n');
+        }
+      }
+
+      const skill = await enableSkill(deps.store, name, {
+        httpAllowedOrigins: deps.config.skillHttpAllowedOrigins,
+        httpTimeoutMs: deps.config.skillHttpTimeoutMs,
+        httpMaxRequestBytes: deps.config.skillHttpMaxRequestBytes,
+        httpMaxResponseBytes: deps.config.skillHttpMaxResponseBytes,
+      });
+      return skill ? `Навык включён: ${skill.id}${warnings}` : `Навык не найден: ${name}`;
+    } catch (error) {
+      return `Навык не включён: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
   if (command === 'skill' && parts[2] === 'disable' && parts[3]) {
     const name = commandTail(parts, 3);
@@ -104,15 +182,20 @@ function formatMood(mood: { warmth: number; tension: number; humor: number }): s
 
 function helpText(): string {
   return [
+    // Общая диагностика и справка
     `${COMMAND_PREFIX} help — список команд`,
     `${COMMAND_PREFIX} status — состояние бота в этом чате`,
     `${COMMAND_PREFIX} doctor — диагностика подключения и настроек`,
+    '',
+    // Режимы общения и цензура
     `${COMMAND_PREFIX} reply-mode — текущий режим ответа`,
     `${COMMAND_PREFIX} reply-mode called — отвечать только на обращение`,
     `${COMMAND_PREFIX} reply-mode smart — читать чат и вмешиваться по делу`,
     `${COMMAND_PREFIX} censor-mode — текущий режим цензуры`,
     `${COMMAND_PREFIX} censor-mode on — обычная речь`,
     `${COMMAND_PREFIX} censor-mode off — разрешить мат по тону`,
+    '',
+    // Характер, настроение и память
     `${COMMAND_PREFIX} identity — текущий характер агента`,
     `${COMMAND_PREFIX} identity set <описание> — задать характер`,
     `${COMMAND_PREFIX} identity reset — сбросить характер`,
@@ -120,14 +203,141 @@ function helpText(): string {
     `${COMMAND_PREFIX} mood reset — сбросить настроение`,
     `${COMMAND_PREFIX} facts — сохранённые факты`,
     `${COMMAND_PREFIX} decisions — сохранённые решения`,
+    '',
+    // Секреты (API ключи и т.д.)
+    `${COMMAND_PREFIX} secrets — требуемые и заполненные секреты чата`,
+    `${COMMAND_PREFIX} secret set KEY VALUE — сохранить секрет чата`,
+    `${COMMAND_PREFIX} secret delete KEY — удалить секрет чата`,
+    '',
+    // MCP integrations
+    `${COMMAND_PREFIX} mcp servers — подключенные MCP servers`,
+    `${COMMAND_PREFIX} mcp add-remote <id> <url> — добавить remote MCP server в этот чат`,
+    `${COMMAND_PREFIX} mcp set-token <id> <SECRET_KEY> — использовать secret как Bearer token`,
+    `${COMMAND_PREFIX} mcp tools <id> — показать tools MCP server`,
+    `${COMMAND_PREFIX} mcp allow-tool <id> <tool> — разрешить конкретный tool`,
+    `${COMMAND_PREFIX} mcp delete <id> — удалить MCP server из этого чата`,
+    '',
+    // Навыки (skills)
     `${COMMAND_PREFIX} skills — навыки и черновики`,
     `${COMMAND_PREFIX} skill enable <name> — включить навык`,
     `${COMMAND_PREFIX} skill disable <name> — выключить навык`,
     `${COMMAND_PREFIX} skill delete <name> — удалить навык`,
+    '',
+    // Планировщик задач (cron)
     `${COMMAND_PREFIX} cron list — список cron-задач`,
     `${COMMAND_PREFIX} cron enable <name> — включить cron-задачу`,
     `${COMMAND_PREFIX} cron disable <name> — выключить cron-задачу`,
     `${COMMAND_PREFIX} cron delete <name> — удалить cron-задачу`,
+  ].join('\n');
+}
+
+async function handleMcpCommand(text: string, parts: string[], deps: CommandDeps): Promise<string> {
+  const action = parts[2] ?? 'servers';
+  if (action === 'servers') {
+    const config = await readChatMcpConfig(deps.store);
+    const ids = Object.keys(config.servers);
+    if (!ids.length) return 'В этом чате нет подключенных MCP servers.';
+    return ids.map((id) => {
+      const server = config.servers[id]!;
+      const tools = server.allowedTools.length ? server.allowedTools.join(', ') : 'all';
+      const resources = server.allowedResources.length ? server.allowedResources.join(', ') : 'all';
+      return `${server.enabled ? 'on' : 'off'} ${id}: ${server.url}; tools=${tools}; resources=${resources}`;
+    }).join('\n');
+  }
+
+  if (action === 'add-remote' && parts[3] && parts[4]) {
+    const id = parts[3];
+    const url = parts[4];
+    const server: ChatMcpServerConfig = {
+      transport: 'streamable_http',
+      url,
+      enabled: true,
+      title: id,
+      allowedTools: [],
+      allowedResources: [],
+    };
+    try {
+      await upsertChatMcpServer(deps.store, id, server);
+    } catch (error) {
+      return `MCP server не добавлен: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    return [
+      `MCP server добавлен: ${id}`,
+      `URL: ${url}`,
+      '',
+      `Если нужен токен, сохраните secret и привяжите его как Bearer token:`,
+      `${COMMAND_PREFIX} secret set MCP_TOKEN <значение>`,
+      `${COMMAND_PREFIX} mcp set-token ${id} MCP_TOKEN`,
+      '',
+      `Проверить tools: ${COMMAND_PREFIX} mcp tools ${id}`,
+    ].join('\n');
+  }
+
+  if (action === 'set-token' && parts[3] && parts[4]) {
+    const id = parts[3];
+    const secretKey = parts[4];
+    const config = await readChatMcpConfig(deps.store);
+    const server = config.servers[id];
+    if (!server) return `MCP server не найден: ${id}`;
+    try {
+      await upsertChatMcpServer(deps.store, id, {
+        ...server,
+        authSecretKey: secretKey,
+      });
+    } catch (error) {
+      return `Token secret не сохранён: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    return `Secret ${secretKey} будет использоваться как Authorization: Bearer <token> для MCP server ${id}.`;
+  }
+
+  if (action === 'tools' && parts[3]) {
+    if (!deps.config.mcpEnabled || !deps.mcp) return 'MCP выключен в настройках приложения.';
+    const serverId = parts[3];
+    try {
+      const tools = await deps.mcp.listAllowedTools({ store: deps.store, serverId });
+      return tools.length
+        ? tools.map((tool) => `- ${tool.name}: ${tool.description ?? 'без описания'}`).join('\n')
+        : `MCP server ${serverId} не вернул tools или все tools отфильтрованы.`;
+    } catch (error) {
+      return `Не смог получить tools MCP server ${serverId}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  if (action === 'allow-tool' && parts[3] && parts[4]) {
+    const id = parts[3];
+    const toolName = parts[4];
+    const config = await readChatMcpConfig(deps.store);
+    const server = config.servers[id];
+    if (!server) return `MCP server не найден: ${id}`;
+    const allowedTools = [...new Set([...server.allowedTools, toolName])];
+    await upsertChatMcpServer(deps.store, id, { ...server, allowedTools });
+    return `Tool ${toolName} разрешён для MCP server ${id}.`;
+  }
+
+  if (action === 'allow-resource' && parts[3] && parts[4]) {
+    const id = parts[3];
+    const pattern = parts[4];
+    const config = await readChatMcpConfig(deps.store);
+    const server = config.servers[id];
+    if (!server) return `MCP server не найден: ${id}`;
+    const allowedResources = [...new Set([...server.allowedResources, pattern])];
+    await upsertChatMcpServer(deps.store, id, { ...server, allowedResources });
+    return `Resource pattern ${pattern} разрешён для MCP server ${id}.`;
+  }
+
+  if (action === 'delete' && parts[3]) {
+    const id = parts[3];
+    return (await deleteChatMcpServer(deps.store, id)) ? `MCP server удалён: ${id}` : `MCP server не найден: ${id}`;
+  }
+
+  return [
+    `${COMMAND_PREFIX} mcp servers`,
+    `${COMMAND_PREFIX} mcp add-remote <id> <url>`,
+    `${COMMAND_PREFIX} mcp set-token <id> <SECRET_KEY>`,
+    `${COMMAND_PREFIX} mcp tools <id>`,
+    `${COMMAND_PREFIX} mcp allow-tool <id> <tool>`,
+    `${COMMAND_PREFIX} mcp allow-resource <id> <uri-or-prefix*>`,
+    `${COMMAND_PREFIX} mcp delete <id>`,
   ].join('\n');
 }
 

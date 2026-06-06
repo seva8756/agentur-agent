@@ -1,39 +1,36 @@
-# Tiny Telegram Agent
+# Chat Agent "Агентур'a"
 
-Standalone MVP Telegram-бота для групповых чатов. По умолчанию он может работать во всех чатах, куда его добавили, и хранит память раздельно по каждому chat ID. Если заполнить `TELEGRAM_ALLOWED_CHAT_ID`, включается строгий single-chat режим.
+Chat-first Telegram agent для множества чатов. Бот может работать во всех чатах, куда его добавили, хранит память раздельно по каждому chat ID и позволяет каждому чату иметь свои настройки, identity, secrets, skills и cron jobs.
 
-## Что умеет
+## Что Умеет
 
-- при пустом `TELEGRAM_ALLOWED_CHAT_ID` обслуживает все чаты с отдельной памятью в `data/chats/<chat>/`;
-- при заполненном `TELEGRAM_ALLOWED_CHAT_ID` молча игнорирует остальные чаты;
-- хранит свежие сообщения, summary, facts, decisions, mood, skills и cron в `data/`;
-- отвечает на mention, reply на сообщение бота, `/agentur`, прямое обращение вроде `бот, ...`, сработавший skill или cron;
-- поддерживает OpenAI, OpenRouter и любой OpenAI-compatible endpoint через `LLM_BASE_URL`;
-- отключает LLM tool calls флагом `LLM_SUPPORTS_TOOLS=false`;
-- не исполняет произвольный сгенерированный код.
+- multi-chat режим по умолчанию: данные каждого чата лежат в `data/chats/<encoded-chat-id>/`;
+- single-chat режим через `TELEGRAM_ALLOWED_CHAT_ID`;
+- ответы на mention, reply на сообщение бота, `/agentur`, прямое обращение, сработавший skill или cron;
+- OpenAI/OpenRouter/любой OpenAI-compatible endpoint через `LLM_BASE_URL`;
+- LLM tool loop с несколькими последовательными tool calls за один ответ;
+- chat-local skills с `SKILL.md`, `skill.json`, `plugin.js`;
+- выполнение generated skills в QuickJS sandbox;
+- safe HTTP layer для skills и agent tools;
+- chat-local secrets для API keys;
+- cron jobs, которые могут отправлять текст, спрашивать агента или запускать skill tool;
+- facts, decisions, mood diary, identity, reply mode и compact interaction summaries.
 
-## Ограничения MVP
+## Ограничения
 
-- long polling, webhooks не включены;
+- long polling, webhooks не используются;
 - память файловая, без БД и vector search;
-- micro-skills только декларативные JSON;
-- свободный разбор сложных напоминаний зависит от LLM tool calling, но команды работают без tools.
+- generated code исполняется только в QuickJS sandbox, без Node.js APIs, `fetch`, `require`, `import`, `eval`, `Function`, shell и произвольного filesystem access;
+- tool calling зависит от LLM-провайдера. При проблемах с function calling бот может деградировать до обычного ответа без tools.
 
-## Telegram setup
-
-1. Создайте бота через BotFather: `/newbot`.
-2. Скопируйте токен в `TELEGRAM_BOT_TOKEN`.
-3. Чтобы бот видел обычные сообщения группы, отключите privacy mode через BotFather: `/setprivacy` -> `Disable`. Альтернатива: дайте боту права администратора, если ваша конфигурация группы этого требует.
-4. Добавьте бота в группу.
-5. Узнайте chat ID: временно отправьте сообщение в группу и вызовите `getUpdates` у Telegram API, либо используйте отдельного ID-бота. Для supergroup ID обычно выглядит как `-100...`.
-
-## Настройка
+## Установка
 
 ```bash
+npm install
 cp .env.example .env
 ```
 
-Минимально заполните вручную:
+Минимально заполните `.env`:
 
 ```env
 TELEGRAM_BOT_TOKEN=...
@@ -43,9 +40,9 @@ LLM_API_KEY=...
 LLM_MODEL=...
 ```
 
-`TELEGRAM_ALLOWED_CHAT_ID` можно оставить пустым: тогда бот работает во всех чатах, куда его добавили, и не смешивает память между ними. Если хотите ограничить бота одним чатом, укажите конкретный chat ID.
+`TELEGRAM_ALLOWED_CHAT_ID` можно оставить пустым: бот будет работать во всех чатах, но память и настройки останутся изолированными по чатам.
 
-`TELEGRAM_BOT_USERNAME` можно оставить пустым: приложение получит username через Telegram `getMe` при старте.
+## LLM Providers
 
 OpenAI:
 
@@ -65,7 +62,7 @@ LLM_MODEL=openai/gpt-4.1-mini
 LLM_SUPPORTS_TOOLS=true
 ```
 
-Custom OpenAI-compatible endpoint:
+OpenAI-compatible endpoint:
 
 ```env
 LLM_BASE_URL=https://your-endpoint.example/v1
@@ -74,33 +71,47 @@ LLM_MODEL=your-model
 LLM_SUPPORTS_TOOLS=false
 ```
 
-## Запуск локально
+Важные LLM-настройки:
+
+```env
+LLM_TIMEOUT_MS=45000
+LLM_MAX_RETRIES=1
+AGENT_MAX_TOOL_STEPS=6
+AGENT_MAX_REPLY_CHARS=900
+CONTEXT_MAX_CHARS=14000
+```
+
+## Telegram Setup
+
+1. Создайте бота через BotFather: `/newbot`.
+2. Скопируйте токен в `TELEGRAM_BOT_TOKEN`.
+3. Для групп отключите privacy mode через BotFather: `/setprivacy` -> `Disable`, иначе бот не увидит обычные сообщения.
+4. Добавьте бота в чат.
+5. При необходимости укажите `TELEGRAM_ALLOWED_CHAT_ID`.
+
+## Запуск
+
+Локально:
 
 ```bash
-npm install
 npm run build
 npm test
 npm start
 ```
 
-Для разработки:
+Разработка:
 
 ```bash
 npm run dev
 ```
 
-## Docker
-
-```bash
-docker build -t tiny-telegram-agent .
-docker run --env-file .env -v "$PWD/data:/app/data" tiny-telegram-agent
-```
-
-Или:
+Docker:
 
 ```bash
 docker compose up --build
 ```
+
+Данные монтируются через `./data:/app/data`.
 
 ## Команды
 
@@ -108,226 +119,311 @@ docker compose up --build
 /agentur help
 /agentur status
 /agentur doctor
+
+/agentur reply-mode
+/agentur reply-mode called
+/agentur reply-mode smart
+
+/agentur censor-mode
+/agentur censor-mode on
+/agentur censor-mode off
+
+/agentur identity
+/agentur identity set <описание>
+/agentur identity reset
+
 /agentur mood
 /agentur mood reset
 /agentur facts
 /agentur decisions
+
+/agentur secrets
+/agentur secret set KEY VALUE
+/agentur secret delete KEY
+
 /agentur skills
-/agentur skill enable <id>
-/agentur skill disable <id>
+/agentur skill enable <name>
+/agentur skill disable <name>
+/agentur skill delete <name>
+
 /agentur cron list
-/agentur cron enable <id>
-/agentur cron disable <id>
+/agentur cron enable <name>
+/agentur cron disable <name>
+/agentur cron delete <name>
 ```
 
-`/agentur doctor` проверяет конфиг, доступность `data/`, Telegram, LLM и tool calling capability, если tools включены. Секреты не выводятся.
+`/agentur doctor` проверяет конфиг, доступность `data/`, Telegram, LLM и tool calling capability. Секреты не выводятся.
 
-## Micro-skills
+## Структура Данных
 
-Попросите в чате:
+Все данные чата хранятся в:
 
 ```text
-бот, создай навык: когда кто-то пишет "надо купить", добавляй предмет в общий список покупок
+data/chats/<encoded-chat-id>/
 ```
 
-LLM создаст JSON draft в `data/skills/drafts/<id>.json` в single-chat режиме или в `data/chats/<encoded-chat-id>/skills/drafts/<id>.json` в multi-chat режиме. Включение только явно:
+Основные файлы:
+
+- `chat/recent.jsonl` — короткий буфер свежих сообщений;
+- `chat/summary.md` — накопленная сводка;
+- `chat/interaction-summaries.jsonl` — compact summaries interaction-буфера;
+- `chat/mood.json`, `chat/mood-history.jsonl` — настроение чата;
+- `chat/facts.json` — факты;
+- `chat/decisions.json` — решения;
+- `chat/settings.json` — reply/censor mode;
+- `chat/identity.md` — стабильная identity агента в этом чате;
+- `chat/secrets.json` — chat-local secrets;
+- `chat/lists/*.json` — списки, которыми пользуются skills;
+- `skills/drafts/<id>/` — черновики skills;
+- `skills/enabled/<id>/` — включенные live skills;
+- `skills/state/<id>.json` — scoped storage конкретного skill;
+- `skills/audit/<id>.jsonl` — audit log запусков skill;
+- `cron/jobs.json` — cron drafts и enabled jobs.
+
+## Skills
+
+Skill теперь является chat-local package:
 
 ```text
-/agentur skill enable shopping_list
+skills/drafts/<id>/
+  skill.json
+  SKILL.md
+  plugin.js
+
+skills/enabled/<id>/
+  skill.json
+  SKILL.md
+  plugin.js
 ```
 
-После этого сообщение:
+`drafts` — черновик, который агент может писать и исправлять.
+`enabled` — live-копия, которую бот реально исполняет.
+
+Изменение draft не меняет live-версию автоматически. Чтобы выкатить draft:
 
 ```text
-надо купить упаковочную плёнку
+/agentur skill enable <id>
 ```
 
-может добавить элемент в `data/chat/lists/shopping.json` и ответить кратким подтверждением.
+Enable делает validation/dry-run и копирует draft в enabled. Перезапуск бота для изменения `data/` не нужен, но изменения в `src/` требуют rebuild контейнера.
 
-В MVP skills не могут запускать JavaScript/TypeScript, `eval`, shell-команды, произвольный filesystem access или HTTP-запросы.
+Подробный гайд: [docs/skill-packages.md](docs/skill-packages.md).
 
-## Cron
+## Skill Runtime
 
-Попросите:
+`plugin.js` исполняется в QuickJS sandbox. Контракт:
 
-```text
-бот, каждую среду в 10 утра напоминай проверить поставки
+```js
+export default {
+  tools: {
+    async add_item(ctx, args) {
+      const item = args.item || ctx.item;
+      await ctx.api.lists.append("shopping", item);
+      return { ok: true, reply: `Добавил: ${item}` };
+    }
+  }
+};
 ```
 
-LLM создаст disabled draft в `data/cron/jobs.json`. Включение:
+SDK доступен только через `ctx.api`:
 
-```text
-/agentur cron enable cron_xxx
+- `ctx.api.storage.get/set/delete`;
+- `ctx.api.lists.list/append/clear`;
+- `ctx.api.memory.rememberFact/saveDecision`;
+- `ctx.api.http.request/get/post/put/patch/delete`;
+- `ctx.api.secrets.get`;
+- `ctx.api.log`;
+- `ctx.api.sleep`.
+
+Результат tool:
+
+```js
+return {
+  ok: true,
+  reply: "text or null",
+  data: { optional: "machine-readable" },
+  send: { optional: "media payload" },
+  error: { code: "optional", message: "optional" }
+};
 ```
 
-Cron-задачи всегда отправляют сообщения только в тот чат, где были созданы. В single-chat режиме это `TELEGRAM_ALLOWED_CHAT_ID`.
+`reply: null` означает: tool успешно завершился, но отвечать нечего.
 
-## Файлы данных
+## Safe HTTP
 
-- `data/chat/*` — данные single-chat режима, если задан `TELEGRAM_ALLOWED_CHAT_ID`;
-- `data/chats/<encoded-chat-id>/chat/recent.jsonl` — свежие сообщения multi-chat режима;
-- `data/chat/summary.md` — сжатый архив при ротации;
-- `data/chat/mood.json` и `mood-history.jsonl` — дневник настроения;
-- `data/chat/facts.json` — факты;
-- `data/chat/decisions.json` — решения;
-- `data/chat/lists/*.json` — списки из skills;
-- `data/skills/drafts/*.json` — черновики навыков;
-- `data/skills/enabled/*.json` — включённые навыки;
-- `data/cron/jobs.json` — cron drafts и enabled jobs.
+HTTP из skills и agent-facing `execute_http_query` идет через общий `safeHttpRequest`.
 
-## Универсальные micro-skills
+Ограничения:
 
-Micro-skills остаются безопасными JSON-декларациями, без JS/eval/shell. Чтобы не дорабатывать код под каждый кейс, runtime поддерживает универсальные действия:
+- только `http` и `https`;
+- direct `fetch` в `plugin.js` запрещен;
+- origin должен быть объявлен в `skill.json`;
+- origin должен быть разрешен глобально в `SKILL_HTTP_ALLOWED_ORIGINS`;
+- localhost/private IP блокируются;
+- redirects проверяются на каждом шаге;
+- есть timeout, request body limit и response body limit.
 
-- `reply_template` — ответ по шаблону с переменными `{{text}}`, `{{item}}`, `{{username}}`, `{{displayName}}`, `{{chatId}}`;
-- `http_request` — HTTP-запрос к заранее разрешённому origin;
-- `chain` — цепочка до 8 действий, например сохранить в список, вызвать webhook и ответить шаблоном.
-
-HTTP-действия выключены по умолчанию. Разрешите только нужные origin:
+Настройки:
 
 ```env
-SKILL_HTTP_ALLOWED_ORIGINS=https://api.example.com,https://hooks.example.com
+SKILL_HTTP_ALLOWED_ORIGINS=
 SKILL_HTTP_TIMEOUT_MS=10000
+SKILL_HTTP_MAX_REQUEST_BYTES=131072
+SKILL_HTTP_MAX_RESPONSE_BYTES=1048576
 ```
 
-Пример JSON action, который LLM может создать через tool calling:
+`SKILL_HTTP_ALLOWED_ORIGINS=*` разрешает любые публичные origins, но проверки localhost/private IP и лимитов остаются.
 
-```json
-{
-  "type": "chain",
-  "actions": [
-    { "type": "http_request", "method": "GET", "url": "https://api.example.com/lookup?q={{item}}", "responseTemplate": "Ответ ручки: {{responseText}}" },
-    { "type": "reply_template", "template": "Обработал: {{item}}" }
-  ]
-}
-```
+## Trusted MCP Skill And Chat MCP Servers
 
-Если origin не указан в `SKILL_HTTP_ALLOWED_ORIGINS`, skill не будет создан или запрос будет заблокирован при выполнении.
+Привилегированные интеграции живут как trusted/system skills в `skills/catalog/`. Они похожи на обычные skills по manifest и `SKILL.md`, но исполняются native-кодом без QuickJS sandbox.
 
-## Политика хранения сообщений
+Первый catalog skill: `skills/catalog/mcp`.
 
-По умолчанию бот не пишет в `recent.jsonl` всю фоновую переписку. В память попадают только:
+Он добавляет direct tools в LLM loop:
 
-- сообщения, обращённые к боту;
-- `/agentur` команды;
-- сообщения, которые активировали skill;
-- ответы самого бота;
-- cron/agentur interactions.
+- `mcp_list_servers`;
+- `mcp_list_tools`;
+- `mcp_call_tool`;
+- `mcp_read_resource`.
 
-Это снижает расход диска и не собирает сырые данные из всех чатов. Mood diary и контекст в таком режиме строятся по взаимодействиям с ботом, а не по полной пассивной переписке.
-
-Если для конкретного чата нужен полный контекст, укажите его ID:
+Включение:
 
 ```env
-TELEGRAM_FULL_CAPTURE_CHAT_IDS=-1001234567890,-1009876543210
+MCP_ENABLED=true
+MCP_TIMEOUT_MS=20000
+MCP_MAX_RESPONSE_BYTES=262144
 ```
 
-Чтобы вернуть старое поведение для всех разрешённых чатов:
-
-```env
-TELEGRAM_FULL_CAPTURE_CHAT_IDS=*
-```
-
-### Сводка и очистка interaction-buffer
-
-Для чатов, которые не входят в `TELEGRAM_FULL_CAPTURE_CHAT_IDS`, `recent.jsonl` используется как короткий буфер взаимодействий с ботом. После `INTERACTION_SUMMARY_EVERY_MESSAGES` сохранённых сообщений бот:
-
-- анализирует настроение по буферу;
-- обновляет `data/.../chat/mood.json`;
-- добавляет запись в `data/.../chat/mood-history.jsonl`;
-- пишет компактную запись в `data/.../chat/interaction-summaries.jsonl`;
-- добавляет текстовую сводку в `data/.../chat/summary.md`;
-- очищает `recent.jsonl`.
-
-По умолчанию:
-
-```env
-INTERACTION_SUMMARY_EVERY_MESSAGES=50
-```
-
-Для full-capture чатов применяется прежняя ротация через `RECENT_MESSAGES_FILE_LIMIT`, потому что там явно включён сбор полного контекста.
-
-## Chat Identity
-
-У каждого чата может быть стабильная identity агента. Это не mood diary: identity задаёт постоянный характер и правила поведения агента в конкретном чате и не переписывается под настроение.
-
-Файл хранится в:
+Каждый чат может подключать свои remote MCP servers:
 
 ```text
-data/.../chat/identity.md
+/agentur mcp add-remote my_gitlab https://my-gitlab-mcp.example.com/mcp
+/agentur secret set GITLAB_MCP_TOKEN ...
+/agentur mcp set-token my_gitlab GITLAB_MCP_TOKEN
+/agentur mcp tools my_gitlab
+/agentur mcp allow-tool my_gitlab list_merge_requests
 ```
+
+Chat config хранится в `data/chats/<chat>/integrations/mcp/servers.json`, secrets остаются в `chat/secrets.json`. MCP servers подключаются только как remote `streamable_http`; `localhost`, private IP и запуск локальных процессов не поддерживаются.
+
+Chat-generated skills могут использовать уже подключенные MCP servers:
+
+```js
+const result = await ctx.api.mcp.callTool("my_gitlab", "list_merge_requests", {});
+```
+
+Подробности: `docs/trusted-mcp-skill-example.md`.
+
+## Secrets
+
+Secrets scoped per chat и лежат в `chat/secrets.json`.
 
 Команды:
 
 ```text
-/agentur identity
-/agentur identity set <описание характера и правил>
-/agentur identity reset
+/agentur secrets
+/agentur secret set OPENROUTER_API_KEY sk-or-...
+/agentur secret delete OPENROUTER_API_KEY
 ```
 
-Можно задать identity файлом: отправьте `.txt` или `.md` документ с caption:
-
-```text
-/agentur identity set
-```
-
-Текст файла будет сохранён как identity этого чата. Размер ограничен:
-
-```env
-AGENT_IDENTITY_MAX_CHARS=5000
-```
-
-## Связь cron и micro-skills
-
-Cron-задачи могут не только отправлять статичный текст или спрашивать агента, но и запускать включённый micro-skill в том же чате.
-
-Action:
+Skill должен объявить нужные секреты в `skill.json`:
 
 ```json
 {
-  "type": "run_micro_skill",
+  "permissions": {
+    "secrets": ["OPENROUTER_API_KEY"]
+  }
+}
+```
+
+В `plugin.js` доступ есть только к объявленным secrets:
+
+```js
+const key = ctx.api.secrets.get("OPENROUTER_API_KEY");
+```
+
+## Cron
+
+Cron jobs создаются как disabled drafts в `cron/jobs.json`, затем включаются командой:
+
+```text
+/agentur cron enable <id>
+```
+
+Поддерживаемые actions:
+
+- `send_static_message`;
+- `ask_agent_and_send`;
+- `run_skill_tool`.
+
+Пример `run_skill_tool`:
+
+```json
+{
+  "type": "run_skill_tool",
   "skillId": "daily_report",
+  "toolName": "build",
+  "args": {},
   "text": "cron daily report",
   "sendResult": true
 }
 ```
 
-Правила:
+Cron запускает enabled skill tool напрямую в том же чате. Triggers при этом не проверяются.
 
-- skill должен быть включён через `/agentur skill enable <id>`;
-- cron запускает action навыка напрямую по `skillId`, trigger навыка при этом не проверяется;
-- `text` передаётся навыку как синтетическое сообщение от `Cron`;
-- если skill вернул текст и `sendResult=true`, cron отправит этот текст в чат;
-- HTTP allowlist и файловая память остаются теми же, что у обычных skills этого чата.
+## Reply Mode И Контекст
 
-## Режим ответа в чате
+`called` — режим по умолчанию. Бот отвечает только на явное обращение, reply, команду, skill trigger или cron.
 
-Для каждого чата можно выбрать, как бот вмешивается в диалог.
-
-Команды:
+`smart` — бот мониторит чат, сохраняет короткий буфер и через compact LLM-classifier решает, стоит ли вмешаться.
 
 ```text
-/agentur reply-mode
 /agentur reply-mode called
 /agentur reply-mode smart
 ```
 
-Режимы:
+По умолчанию фоновая переписка не пишется полностью в `recent.jsonl`. Для полного capture:
 
-- `called` — режим по умолчанию. Бот отвечает только на mention, reply, `/agentur`, прямое обращение или сработавший skill.
-- `smart` — бот мониторит чат, сохраняет короткий буфер сообщений и через компактный LLM-classifier решает, стоит ли самому вмешаться.
+```env
+TELEGRAM_FULL_CAPTURE_CHAT_IDS=-1001234567890,-1009876543210
+```
 
-Настройка хранится в `data/.../chat/settings.json` и привязана к конкретному чату. В smart mode фоновая переписка попадает в короткий буфер и затем сворачивается через `INTERACTION_SUMMARY_EVERY_MESSAGES`, как обычные interactions.
+Для всех чатов:
 
-## Локальное время агента
+```env
+TELEGRAM_FULL_CAPTURE_CHAT_IDS=*
+```
 
-Агент всегда получает в system context текущее локальное время по `AGENT_TIMEZONE`:
+Для чатов без full capture `recent.jsonl` является interaction-buffer. После `INTERACTION_SUMMARY_EVERY_MESSAGES` сообщений бот обновляет mood, пишет summary и очищает буфер.
+
+## Identity, Mood, Facts, Decisions
+
+Identity — стабильный характер и правила поведения агента в конкретном чате:
+
+```text
+/agentur identity
+/agentur identity set <описание>
+/agentur identity reset
+```
+
+Также можно отправить `.txt` или `.md` файл с caption:
+
+```text
+/agentur identity set
+```
+
+Mood — динамическая оценка атмосферы чата. Facts и decisions — долговременная память, которую агент может пополнять через tools.
+
+## Локальное Время
+
+Агент получает локальное время по:
 
 ```env
 AGENT_TIMEZONE=Europe/Moscow
 ```
 
-Timezone валидируется как IANA timezone при старте. `/agentur doctor` также показывает рассчитанное локальное время.
+Timezone валидируется как IANA timezone при старте.
 
 ## License
 

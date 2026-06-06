@@ -1,25 +1,30 @@
 import { ToolRegistry } from './registry';
+import { AppConfig } from '../config';
+import { McpManager, SdkMcpManager } from '../integrations/mcp/manager';
+import { TrustedSkill } from '../skills/trustedTypes';
+import { trustedSkillToAgentTools } from '../skills/trustedRuntime';
 import { createCronJobTool } from './implementations/createCronJob';
-import { createMicroSkillDraftTool } from './implementations/createMicroSkillDraft';
+import { createSkillPackageDraftTool } from './implementations/createSkillPackageDraft';
 import { deleteCronJobTool } from './implementations/deleteCronJob';
 import { deleteMicroSkillTool } from './implementations/deleteMicroSkill';
 import { disableCronJobTool } from './implementations/disableCronJob';
 import { disableMicroSkillTool } from './implementations/disableMicroSkill';
 import { enableMicroSkillTool } from './implementations/enableMicroSkill';
-import { executeMicroSkillTool } from './implementations/executeMicroSkill';
+import { runSkillToolTool } from './implementations/runSkillTool';
 import { listCronJobsTool } from './implementations/listCronJobs';
-import { listMicroSkillsTool } from './implementations/listMicroSkills';
+import { listSkillPackagesTool } from './implementations/listSkillPackages';
 import { rememberFactTool } from './implementations/rememberFact';
 import { saveDecisionTool } from './implementations/saveDecision';
+import { executeHttpQueryTool } from './implementations/executeHttpQuery';
 
-export function createBuiltinToolRegistry(): ToolRegistry {
+export function createBuiltinToolRegistry(config?: AppConfig, trustedSkills: TrustedSkill[] = [], mcp?: McpManager): ToolRegistry {
   const registry = new ToolRegistry();
   [
     rememberFactTool,
     saveDecisionTool,
-    createMicroSkillDraftTool,
-    listMicroSkillsTool,
-    executeMicroSkillTool,
+    createSkillPackageDraftTool,
+    listSkillPackagesTool,
+    runSkillToolTool,
     enableMicroSkillTool,
     disableMicroSkillTool,
     deleteMicroSkillTool,
@@ -27,6 +32,11 @@ export function createBuiltinToolRegistry(): ToolRegistry {
     listCronJobsTool,
     disableCronJobTool,
     deleteCronJobTool,
+    executeHttpQueryTool,
   ].forEach((tool) => registry.register(tool));
+  if (config?.mcpEnabled) {
+    const mcpManager = mcp ?? new SdkMcpManager(config);
+    trustedSkills.flatMap((skill) => trustedSkillToAgentTools({ skill, config, mcp: mcpManager })).forEach((tool) => registry.register(tool));
+  }
   return registry;
 }
