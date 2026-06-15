@@ -31,7 +31,7 @@ export class ChatRuntimeManager {
   ) {}
 
   isChatAllowed(chatId: string): boolean {
-    return !this.config.telegramAllowedChatId || chatId === this.config.telegramAllowedChatId;
+    return this.config.telegramAllowedChatIds.length === 0 || this.config.telegramAllowedChatIds.includes(chatId);
   }
 
   isFullCaptureChat(chatId: string): boolean {
@@ -107,8 +107,8 @@ export class ChatRuntimeManager {
   }
 
   async loadKnownRuntimes(): Promise<void> {
-    if (this.config.telegramAllowedChatId) {
-      await this.getRuntime(this.config.telegramAllowedChatId);
+    if (this.config.telegramAllowedChatIds.length > 0) {
+      await Promise.all(this.config.telegramAllowedChatIds.map((chatId) => this.getRuntime(chatId)));
     }
 
     const chatsDir = path.join(this.config.agentDataDir, 'chats');

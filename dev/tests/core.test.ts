@@ -206,6 +206,37 @@ describe('single-chat filtering', () => {
     await expect(fs.access(second!.store.resolve('chat', 'marker.json'))).rejects.toThrow();
   });
 
+  it('allows multiple configured chats and does not create stores for denied chats', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiny-agent-allowlist-'));
+    const config = loadConfig({
+      TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHI',
+      TELEGRAM_ALLOWED_CHAT_ID: '-1001, -1002',
+      TELEGRAM_BOT_USERNAME: '',
+      LLM_BASE_URL: 'https://api.openai.com/v1',
+      LLM_API_KEY: 'sk-test',
+      LLM_MODEL: 'test-model',
+      LLM_SUPPORTS_TOOLS: 'false',
+      AGENT_DATA_DIR: dir,
+    });
+    const manager = new ChatRuntimeManager(
+      config,
+      { chat: async () => 'ok', minimalCheck: async () => 'ok', toolCheck: async () => false },
+      new ToolRegistry(),
+      async () => undefined,
+    );
+
+    const first = await manager.getRuntime('-1001');
+    const second = await manager.getRuntime('-1002');
+    const denied = await manager.getRuntime('-1003');
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(denied).toBeNull();
+    expect(first?.store.rootDir).not.toEqual(second?.store.rootDir);
+    const deniedDir = path.join(dir, 'chats', Buffer.from('-1003', 'utf8').toString('base64url'));
+    await expect(fs.access(deniedDir)).rejects.toThrow();
+  });
+
   it('does not store silent background messages by default', async () => {
     const { store, config, scheduler } = await tempStore();
     const reply = await routeMessage(msg({ text: 'просто фоновая переписка' }), {

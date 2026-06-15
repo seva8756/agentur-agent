@@ -29,7 +29,7 @@ const commaList = z
 
 const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1),
-  TELEGRAM_ALLOWED_CHAT_ID: optionalNonEmpty,
+  TELEGRAM_ALLOWED_CHAT_ID: commaList.default(''),
   TELEGRAM_BOT_USERNAME: optionalNonEmpty.transform((v) => v?.replace(/^@/, '')),
   TELEGRAM_FULL_CAPTURE_CHAT_IDS: commaList.default(''),
   LLM_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
@@ -73,9 +73,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   const v = parsed.data;
   return {
     telegramBotToken: v.TELEGRAM_BOT_TOKEN,
-    telegramAllowedChatId: v.TELEGRAM_ALLOWED_CHAT_ID,
+    telegramAllowedChatIds: v.TELEGRAM_ALLOWED_CHAT_ID,
     telegramBotUsername: v.TELEGRAM_BOT_USERNAME,
-    telegramMultiChat: !v.TELEGRAM_ALLOWED_CHAT_ID,
+    telegramMultiChat: v.TELEGRAM_ALLOWED_CHAT_ID.length !== 1,
     telegramFullCaptureChatIds: v.TELEGRAM_FULL_CAPTURE_CHAT_IDS,
     llmBaseUrl: v.LLM_BASE_URL,
     llmApiKey: v.LLM_API_KEY,

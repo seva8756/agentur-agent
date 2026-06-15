@@ -41,13 +41,10 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
   if (command === 'help') return helpText();
   if (command === 'status') {
     const settings = await readChatSettings(deps.store);
-    const scope = deps.config.telegramAllowedChatId
-      ? `один чат: ${deps.config.telegramAllowedChatId}`
-      : 'multi-chat: все чаты с отдельной памятью';
     const capture = deps.config.telegramFullCaptureChatIds.length
       ? deps.config.telegramFullCaptureChatIds.join(', ')
       : 'только обращения, навыки и команды';
-    return `Работаю.\nОбласть: ${scope}.\nРежим ответа: ${settings.replyMode}.\nРежим цензуры: ${formatCensorMode(isCensorModeEnabled(settings))}.\nСбор контекста: ${capture}.\nTool Calling: ${deps.config.llmSupportsTools ? 'включен' : 'выключен'}.`;
+    return `Работаю.\nРежим ответа: ${settings.replyMode}.\nРежим цензуры: ${formatCensorMode(isCensorModeEnabled(settings))}.\nСбор контекста: ${capture}.\nTool Calling: ${deps.config.llmSupportsTools ? 'включен' : 'выключен'}.`;
   }
   if (command === 'doctor') return (await runDoctor(deps.config, deps.llm)).join('\n');
   if (command === 'mcp') return handleMcpCommand(text, parts, deps);

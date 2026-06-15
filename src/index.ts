@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   await runtimeManager.loadKnownRuntimes();
   logger.info(`Starting Agentur'a`, {
     mode: config.telegramMultiChat ? 'multi-chat' : 'single-chat',
-    chatId: config.telegramAllowedChatId ?? 'all',
+    chatId: config.telegramAllowedChatIds.length ? config.telegramAllowedChatIds.join(', ') : 'all',
     botUsername,
     baseUrl: config.llmBaseUrl,
   });

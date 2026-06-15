@@ -1,6 +1,6 @@
 {
   "name": "agentur-chat-agent",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Standalone file-backed Telegram group chat AI agent MVP",
   "main": "dist/src/index.js",
   "private": true,

@@ -33,7 +33,7 @@ export type RouterDeps = {
 };
 
 export async function routeMessage(message: ChatMessage, deps: RouterDeps): Promise<SkillRunResult | null> {
-  if (deps.config.telegramAllowedChatId && message.chatId !== deps.config.telegramAllowedChatId) {
+  if (deps.config.telegramAllowedChatIds.length > 0 && !deps.config.telegramAllowedChatIds.includes(message.chatId)) {
     logger.debug('Ignoring message from non-allowed chat');
     return null;
   }
