@@ -19,7 +19,7 @@ const argsSchema = z.object({
   skillMd: z.string().min(1).describe('SKILL.md instructions for when and how to use this skill'),
   pluginJs: z.string().min(1).max(12000).describe('Sandbox plugin.js. Must export/default { tools: { toolName(ctx,args) { ... } } }. Use ctx.api for SDK calls.'),
   tools: z.record(z.string(), toolSpecSchema).describe('Tool specs exposed by plugin.js'),
-  triggers: z.array(looseTriggerSchema).optional().default([]).describe('Use [] by default. Only explicit slash commands are supported as direct triggers, e.g. {type:"command",command:"/balance",tool:"check"}. Plain strings must start with /. Never use phrase, keyword, contains, or natural-language triggers.'),
+  triggers: z.array(looseTriggerSchema).optional().default([]).describe('Default to [] for normal skills. Do not create Telegram slash commands unless the user explicitly asked to bind a slash command. Only explicit slash commands are supported, e.g. {type:"command",command:"/balance",tool:"check"}. Plain strings must start with /. Never use phrase, keyword, contains, or natural-language triggers.'),
   httpOrigins: z.array(z.string().url()).default([]),
   secrets: z.array(z.string()).optional().default([]).describe('Secret key names required by the package'),
   storage: z.boolean().optional().default(true),
@@ -37,9 +37,9 @@ export const createSkillPackageDraftTool: AgentTool<z.output<typeof argsSchema>>
     'Artifact/file contract: create files with ctx.api.artifacts.createText({filename,mimeType,text}) or createBase64({filename,mimeType,base64}); send them with send:{kind:"file", source:{type:"artifact", artifactId: artifact.id}, caption?, filename?}. For images use kind:"photo"; for videos use kind:"video". Never use kind:"artifact".',
     'Tiny example: export default {tools:{async check(ctx,args){const key=ctx.api.secrets.get("KEY"); const res=await ctx.api.http.get("https://example.com/api",{headers:{Authorization:"Bearer "+key}}); const value=res.json&&res.json.value!==undefined?res.json.value:res.text; return {ok:true, reply:String(value)}}}};',
     'No Node.js APIs, no fs/process/require/import/fetch/eval/Function.',
-    'Default to triggers: [] so natural-language requests are selected semantically through whenToUse.',
-    'Create a command trigger only when the user explicitly asks for a slash command or the skill is a deterministic repeatable shortcut. Commands must be explicit slash commands, e.g. {type:"command",command:"/balance",tool:"check"}.',
-    'Do not invent broad convenience commands for exploratory/agentic skills. Do not create phrase/keyword/contains/message_contains triggers.',
+    'Default to triggers: [] so natural-language requests are selected semantically through whenToUse. A skill does not need a Telegram command to be usable.',
+    'Create command triggers only when the user explicitly asks to bind a slash command such as /balance. Do not create one command per tool by default.',
+    'Do not invent convenience commands for skills. Do not create phrase/keyword/contains/message_contains triggers.',
     'For MCP/helper skills, prefer returning structured data/errors instead of raw JSON user-facing replies; let the LLM compose the final answer on semantic calls.',
     'HTTP origins and secrets must be declared explicitly.',
     'The user must enable the draft manually with /agentur skill enable <id>.',
@@ -54,7 +54,7 @@ export const createSkillPackageDraftTool: AgentTool<z.output<typeof argsSchema>>
       runtime: 'quickjs',
       source: 'chat_generated',
       version: 1,
-      triggers: normalizeTriggers(args.triggers, Object.keys(args.tools)),
+      triggers: normalizeTriggers(args.triggers ?? [], Object.keys(args.tools)),
       tools: args.tools,
       permissions: {
         httpOrigins: args.httpOrigins,
@@ -86,6 +86,9 @@ export const createSkillPackageDraftTool: AgentTool<z.output<typeof argsSchema>>
       '',
       `Включите с помощью /agentur skill enable ${skill.id}`,
     ];
+    if (!skill.triggers.length) {
+      lines.push('', 'Навык будет доступен по смысловому выбору агента. Если нужна отдельная Telegram-команда, её можно привязать к конкретному tool отдельной доработкой.');
+    }
     if (skill.permissions.secrets.length > 0) {
       lines.push('', 'Перед включением заполните секреты:', ...skill.permissions.secrets.map((key) => `/agentur secret set ${key} <значение>`));
     }

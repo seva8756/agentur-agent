@@ -1093,6 +1093,28 @@ describe('micro-skills', () => {
     expect(drafts[0]?.whenToUse).toBe('Use when the user asks to echo text.');
   });
 
+  it('keeps skill drafts semantic-only by default and mentions optional command binding', async () => {
+    const { store } = await tempStore();
+    const result = await createSkillPackageDraftTool.execute(
+      {
+        title: 'Semantic Echo',
+        whenToUse: 'Use when the user asks to echo text.',
+        skillMd: '# Semantic Echo\n\nUse when the user asks to echo text.',
+        pluginJs: 'export default { tools: { async echo(ctx) { return { ok: true, reply: ctx.text }; } } };',
+        tools: { echo: { description: 'Echo text', schema: { type: 'object', properties: {} } } },
+        triggers: [],
+        httpOrigins: [],
+        secrets: [],
+        storage: true,
+      },
+      { store, timezone: 'Europe/Moscow' },
+    );
+    expect(result).toContain('Триггеры: semantic only');
+    expect(result).toContain('Если нужна отдельная Telegram-команда');
+    const drafts = await loadDraftSkills(store);
+    expect(drafts[0]?.triggers).toEqual([]);
+  });
+
   it('normalizes explicit slash string triggers as commands when creating one-tool skill drafts', async () => {
     const { store } = await tempStore();
     const result = await createSkillPackageDraftTool.execute(

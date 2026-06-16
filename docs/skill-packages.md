@@ -85,9 +85,9 @@ Enable делает validation/dry-run и копирует draft в enabled.
 
 - `runtime` сейчас всегда `"quickjs"`;
 - `tools` должен содержать хотя бы один tool;
-- `triggers` по умолчанию должен быть `[]`;
+- `triggers` по умолчанию должен быть `[]`: skill доступен агенту через semantic selection и не требует Telegram-команды;
 - прямые triggers поддерживают только явные slash-команды, например `/balance`;
-- command-trigger нужен для детерминированных повторяемых shortcut-операций, а не для любого skill;
+- command-trigger создается только когда пользователь явно попросил привязать slash-команду к конкретному tool;
 - каждый trigger обязан ссылаться на существующий tool;
 - natural-language активация идет через `whenToUse` и semantic selection, а не через phrase/keyword triggers;
 - `httpOrigins` должны быть точными origins, например `https://openrouter.ai`;
@@ -95,7 +95,7 @@ Enable делает validation/dry-run и копирует draft в enabled.
 
 Примеры:
 
-- хороший command trigger: `/denis_tasks` всегда собирает конкретный отчет;
+- хороший command trigger: пользователь явно попросил `/denis_tasks`, и команда всегда собирает конкретный отчет;
 - хороший semantic-only skill: GitLab helper с `triggers: []` и точным `whenToUse`;
 - плохой command trigger: `/gitlab`, если внутри skill сам угадывает, что пользователь хотел сделать.
 
