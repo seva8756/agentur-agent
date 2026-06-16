@@ -4,6 +4,7 @@ import { McpManager, SdkMcpManager } from '../integrations/mcp/manager';
 import { TrustedSkill } from '../skills/trustedTypes';
 import { trustedSkillToAgentTools } from '../skills/trustedRuntime';
 import { createCronJobTool } from './implementations/createCronJob';
+import { createArtifactTool } from './implementations/createArtifact';
 import { createSkillPackageDraftTool } from './implementations/createSkillPackageDraft';
 import { deleteCronJobTool } from './implementations/deleteCronJob';
 import { deleteMicroSkillTool } from './implementations/deleteMicroSkill';
@@ -11,6 +12,8 @@ import { disableCronJobTool } from './implementations/disableCronJob';
 import { disableMicroSkillTool } from './implementations/disableMicroSkill';
 import { enableMicroSkillTool } from './implementations/enableMicroSkill';
 import { runSkillToolTool } from './implementations/runSkillTool';
+import { readArtifactTool } from './implementations/readArtifact';
+import { sendArtifactTool } from './implementations/sendArtifact';
 import { listCronJobsTool } from './implementations/listCronJobs';
 import { listSkillPackagesTool } from './implementations/listSkillPackages';
 import { rememberFactTool } from './implementations/rememberFact';
@@ -22,6 +25,9 @@ export function createBuiltinToolRegistry(config?: AppConfig, trustedSkills: Tru
   [
     rememberFactTool,
     saveDecisionTool,
+    createArtifactTool,
+    readArtifactTool,
+    sendArtifactTool,
     createSkillPackageDraftTool,
     listSkillPackagesTool,
     runSkillToolTool,

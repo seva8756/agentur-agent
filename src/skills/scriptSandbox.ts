@@ -1,5 +1,6 @@
 import { getQuickJS, QuickJSContext, QuickJSHandle } from 'quickjs-emscripten';
 import { z } from 'zod';
+import { createBase64Artifact, createTextArtifact, readArtifactMeta, readArtifactText } from '../memory/artifactStore';
 import { saveDecision } from '../memory/decisions';
 import { FileStore } from '../memory/fileStore';
 import { rememberFact } from '../memory/facts';
@@ -276,6 +277,48 @@ async function executeQuickJs(
       await new Promise((resolve) => setTimeout(resolve, ms));
       return JSON.stringify(true);
     }, () => vmAlive);
+    setPromiseHostFunction(vm, deferreds, '__hostArtifactCreateText', async (specHandle) => {
+      try {
+        const spec = parseHostJson(vm.getString(specHandle)) as { filename?: unknown; mimeType?: unknown; text?: unknown };
+        const value = await createTextArtifact(store, {
+          filename: String(spec.filename ?? ''),
+          mimeType: String(spec.mimeType ?? 'text/plain'),
+          text: String(spec.text ?? ''),
+        }, { kind: 'skill', id: skill.id });
+        return JSON.stringify({ ok: true, value });
+      } catch (error) {
+        return JSON.stringify({ ok: false, error: humanError(error) });
+      }
+    }, () => vmAlive);
+    setPromiseHostFunction(vm, deferreds, '__hostArtifactCreateBase64', async (specHandle) => {
+      try {
+        const spec = parseHostJson(vm.getString(specHandle)) as { filename?: unknown; mimeType?: unknown; base64?: unknown };
+        const value = await createBase64Artifact(store, {
+          filename: String(spec.filename ?? ''),
+          mimeType: String(spec.mimeType ?? 'application/octet-stream'),
+          base64: String(spec.base64 ?? ''),
+        }, { kind: 'skill', id: skill.id });
+        return JSON.stringify({ ok: true, value });
+      } catch (error) {
+        return JSON.stringify({ ok: false, error: humanError(error) });
+      }
+    }, () => vmAlive);
+    setPromiseHostFunction(vm, deferreds, '__hostArtifactGetMeta', async (artifactIdHandle) => {
+      try {
+        const value = await readArtifactMeta(store, vm.getString(artifactIdHandle));
+        return JSON.stringify({ ok: true, value });
+      } catch (error) {
+        return JSON.stringify({ ok: false, error: humanError(error) });
+      }
+    }, () => vmAlive);
+    setPromiseHostFunction(vm, deferreds, '__hostArtifactReadText', async (artifactIdHandle) => {
+      try {
+        const value = await readArtifactText(store, vm.getString(artifactIdHandle));
+        return JSON.stringify({ ok: true, value });
+      } catch (error) {
+        return JSON.stringify({ ok: false, error: humanError(error) });
+      }
+    }, () => vmAlive);
 
     const pluginSource = buildPluginSource(skill.pluginJs);
     if (!pluginSource) throw new Error('plugin.js is not runnable');
@@ -469,6 +512,28 @@ function wrapPlugin(pluginSource: string): string {
     memory: Object.freeze({
       rememberFact: async (text) => JSON.parse(await __hostRememberFact(String(text))),
       saveDecision: async (text) => JSON.parse(await __hostSaveDecision(String(text))),
+    }),
+    artifacts: Object.freeze({
+      createText: async (spec) => {
+        const response = JSON.parse(await __hostArtifactCreateText(JSON.stringify(spec || {})));
+        if (!response.ok) throw new Error(response.error || 'artifact createText failed');
+        return response.value;
+      },
+      createBase64: async (spec) => {
+        const response = JSON.parse(await __hostArtifactCreateBase64(JSON.stringify(spec || {})));
+        if (!response.ok) throw new Error(response.error || 'artifact createBase64 failed');
+        return response.value;
+      },
+      get: async (artifactId) => {
+        const response = JSON.parse(await __hostArtifactGetMeta(String(artifactId)));
+        if (!response.ok) throw new Error(response.error || 'artifact get failed');
+        return response.value;
+      },
+      readText: async (artifactId) => {
+        const response = JSON.parse(await __hostArtifactReadText(String(artifactId)));
+        if (!response.ok) throw new Error(response.error || 'artifact readText failed');
+        return response.value;
+      },
     }),
     mcp: Object.freeze({
       listServers: async () => {

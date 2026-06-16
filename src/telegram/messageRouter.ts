@@ -1,6 +1,6 @@
 import { AppConfig } from '../config';
 import { McpManager } from '../integrations/mcp/manager';
-import { generateAgentReply } from '../agent/respond';
+import { generateAgentResult } from '../agent/respond';
 import { decideSmartReply } from '../agent/smartPolicy';
 import { decideReply, stripBotAddress } from '../agent/replyPolicy';
 import { LlmAdapter } from '../llm/types';
@@ -127,7 +127,7 @@ async function createAgentReply(message: ChatMessage, llmInput: string, stripped
     trustedSkills: deps.trustedSkills ?? [],
     mcp: deps.mcp,
   };
-  return textSkillResult(await generateAgentReply({
+  return generateAgentResult({
     input: llmInput,
     image: message.image ? { dataUrl: message.image.dataUrl } : undefined,
     config: deps.config,
@@ -135,7 +135,7 @@ async function createAgentReply(message: ChatMessage, llmInput: string, stripped
     llm: deps.llm,
     tools: deps.tools,
     toolContext,
-  }));
+  });
 }
 
 function shouldCaptureFullChat(config: AppConfig, chatId: string): boolean {

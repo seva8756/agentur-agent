@@ -1,6 +1,7 @@
 import { AppConfig } from '../config';
 import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
+import { SkillRunResult, skillResultText, textSkillResult } from '../skills/result';
 import { loadEnabledSkills } from '../skills/loader';
 import { SkillPackage } from '../skills/schema';
 import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
@@ -20,21 +21,58 @@ export async function generateAgentReply(params: {
   tools: ToolRegistry;
   toolContext: ToolContext;
 }): Promise<string> {
+  return skillResultText(await generateAgentResult(params)) ?? '';
+}
+
+export async function generateAgentResult(params: {
+  input: string;
+  image?: {
+    dataUrl: string;
+  };
+  config: AppConfig;
+  store: FileStore;
+  llm: LlmAdapter;
+  tools: ToolRegistry;
+  toolContext: ToolContext;
+}): Promise<SkillRunResult | null> {
+  const outbox: SkillRunResult[] = [];
+  const toolContext = { ...params.toolContext, outbox };
   const context = await buildChatContext(params.store, params.input, {
     maxChars: params.config.contextMaxChars,
     recentLimit: params.config.recentMessagesContextLimit,
     recentMessageMaxChars: params.config.recentMessageContextMaxChars,
     factsMaxChars: params.config.factsMaxChars,
     timezone: params.config.agentTimezone,
-    currentThreadId: params.toolContext.currentMessage?.threadId,
+    currentThreadId: toolContext.currentMessage?.threadId,
   });
   const skillsContext = await buildEnabledSkillsContext(params.store, params.toolContext.trustedSkills ?? []);
+  const artifactContext = buildArtifactToolsContext();
   const baseMessages = skillsContext
-    ? [...context.slice(0, -1), { role: 'system' as const, content: skillsContext }, context[context.length - 1]]
-    : context;
+    ? [...context.slice(0, -1), { role: 'system' as const, content: [skillsContext, artifactContext].join('\n') }, context[context.length - 1]]
+    : [...context.slice(0, -1), { role: 'system' as const, content: artifactContext }, context[context.length - 1]];
   const messages = attachImageToLastUserMessage(trimMessagesToBudget(baseMessages, params.config.contextMaxChars), params.image?.dataUrl);
-  const text = await chatWithImageFallback(params, messages);
-  return limitOutput(text || 'Не нашёл, что ответить.', params.config.agentMaxReplyChars);
+  const text = await chatWithImageFallback({ ...params, toolContext }, messages);
+  const reply = limitOutput(text || 'Не нашёл, что ответить.', params.config.agentMaxReplyChars);
+  const queued = outbox.at(-1);
+  if (queued?.send) {
+    return {
+      ...queued,
+      reply: reply || queued.reply,
+    };
+  }
+  return textSkillResult(reply);
+}
+
+function buildArtifactToolsContext(): string {
+  return [
+    'Artifact tools create and read chat-local files.',
+    'Use create_artifact when the user asks you to produce a file instead of pasting long content.',
+    'Use read_artifact before modifying or explaining an existing artifact unless its content is already visible.',
+    'Use send_artifact to deliver an existing artifact to Telegram.',
+    'When returning a send payload for an artifact, use send.kind="file" for generic files, send.kind="photo" for images, or send.kind="video" for videos.',
+    'Never use send.kind="artifact"; artifact is only a source type: source={type:"artifact", artifactId:"art_..."}.',
+    'Do not invent artifact IDs; use IDs returned by tools or visible in chat context.',
+  ].join('\n');
 }
 
 async function buildEnabledSkillsContext(store: FileStore, trustedSkills: TrustedSkillPromptInfo[]): Promise<string> {

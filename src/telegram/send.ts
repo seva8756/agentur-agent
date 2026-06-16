@@ -1,5 +1,7 @@
-import { Bot, Context } from 'grammy';
+import { Bot, Context, InputFile } from 'grammy';
 import type { Message, ParseMode } from 'grammy/types';
+import { artifactContentPath, readArtifactMeta } from '../memory/artifactStore';
+import { FileStore } from '../memory/fileStore';
 import { SkillRunResult, skillResultText } from '../skills/result';
 import { logger } from '../utils/logger';
 import { markdownToTelegramHtml } from './formatting';
@@ -49,6 +51,7 @@ export async function sendMarkdown(bot: Bot, chatId: string, text: string, threa
 
 export async function replySkillResult(
   ctx: Context,
+  store: FileStore,
   result: SkillRunResult,
   replyToMessageId?: number,
   threadId?: number,
@@ -56,6 +59,7 @@ export async function replySkillResult(
   if (result.send) {
     try {
       return await sendTelegramPayload({
+        store,
         send: (method, url, options) => ctx.api[method](ctx.chat!.id, url, {
           ...options,
           reply_to_message_id: replyToMessageId,
@@ -71,10 +75,11 @@ export async function replySkillResult(
   return replyMarkdown(ctx, skillResultText(result) ?? '', replyToMessageId, threadId);
 }
 
-export async function sendSkillResult(bot: Bot, chatId: string, result: SkillRunResult, threadId?: number | null): Promise<Message> {
+export async function sendSkillResult(bot: Bot, store: FileStore, chatId: string, result: SkillRunResult, threadId?: number | null): Promise<Message> {
   if (result.send) {
     try {
       return await sendTelegramPayload({
+        store,
         send: (method, url, options) => bot.api[method](chatId, url, {
           ...options,
           message_thread_id: threadId ?? undefined,
@@ -91,15 +96,20 @@ export async function sendSkillResult(bot: Bot, chatId: string, result: SkillRun
 
 function fallbackSkillText(result: SkillRunResult): string {
   const text = skillResultText(result);
-  const url = result.send && result.send.kind !== 'message' ? result.send.url : undefined;
-  return [text, url].filter(Boolean).join('\n') || 'Готово.';
+  const sourceText = result.send && result.send.kind !== 'message'
+    ? result.send.url
+      ?? (result.send.source?.type === 'url' ? result.send.source.url : undefined)
+      ?? (result.send.source?.type === 'artifact' ? result.send.source.artifactId : undefined)
+    : undefined;
+  return [text, sourceText].filter(Boolean).join('\n') || 'Готово.';
 }
 
 async function sendTelegramPayload(params: {
+  store: FileStore;
   result: SkillRunResult;
   send: (
     method: 'sendPhoto' | 'sendDocument' | 'sendVideo',
-    url: string,
+    input: string | InputFile,
     options: Record<string, unknown>,
   ) => Promise<Message>;
 }): Promise<Message> {
@@ -114,9 +124,24 @@ async function sendTelegramPayload(params: {
     caption: safeCaption ? markdownToTelegramHtml(safeCaption) : undefined,
     parse_mode: safeCaption ? 'HTML' as ParseMode : undefined,
   };
-  if (send.kind === 'photo') return callTelegramWithRetry(() => params.send('sendPhoto', send.url, options));
-  if (send.kind === 'document') return callTelegramWithRetry(() => params.send('sendDocument', send.url, options));
-  return callTelegramWithRetry(() => params.send('sendVideo', send.url, options));
+  const input = await resolveTelegramInput(params.store, send);
+  if (send.kind === 'photo') return callTelegramWithRetry(() => params.send('sendPhoto', input, options));
+  if (send.kind === 'file') return callTelegramWithRetry(() => params.send('sendDocument', input, options));
+  return callTelegramWithRetry(() => params.send('sendVideo', input, options));
+}
+
+async function resolveTelegramInput(
+  store: FileStore,
+  send: Exclude<SkillRunResult['send'], undefined>,
+): Promise<string | InputFile> {
+  if (send.kind === 'message') throw new Error('Message payload should be sent as text');
+  if (send.source?.type === 'url') return send.source.url;
+  if (send.url) return send.url;
+  if (send.source?.type === 'artifact') {
+    const meta = await readArtifactMeta(store, send.source.artifactId);
+    return new InputFile(artifactContentPath(store, meta.id), send.filename ?? meta.filename);
+  }
+  throw new Error('Media payload has no url or artifact source');
 }
 
 export function truncateForTelegram(text: string, maxChars: number): string {

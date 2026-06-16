@@ -5,6 +5,7 @@ import { AgentScheduler } from '../scheduler/scheduler';
 import type { McpManager } from '../integrations/mcp/manager';
 import type { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ChatMessage } from '../telegram/telegramTypes';
+import type { SkillRunResult } from '../skills/result';
 
 export type ToolContext = {
   store: FileStore;
@@ -17,6 +18,7 @@ export type ToolContext = {
   currentMessage?: ChatMessage;
   trustedSkills?: TrustedSkillPromptInfo[];
   mcp?: McpManager;
+  outbox?: SkillRunResult[];
 };
 
 export type AgentTool<TArgs = any> = {

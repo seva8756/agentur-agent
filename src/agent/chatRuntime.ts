@@ -25,7 +25,7 @@ export class ChatRuntimeManager {
     private readonly config: AppConfig,
     public readonly llm: LlmAdapter,
     public readonly tools: ToolRegistry,
-    private readonly sendMessage: (chatId: string, result: SkillRunResult, threadId?: number | null) => Promise<void>,
+    private readonly sendMessage: (chatId: string, store: FileStore, result: SkillRunResult, threadId?: number | null) => Promise<void>,
     public readonly trustedSkills: TrustedSkillPromptInfo[] = [],
     public readonly mcp?: McpManager,
   ) {}
@@ -47,7 +47,7 @@ export class ChatRuntimeManager {
     await initializeDataDir(store);
     const runtime: { scheduler?: AgentScheduler } = {};
     const scheduler = new AgentScheduler(store, {
-      sendMessage: async (text, threadId) => this.sendMessage(chatId, text, threadId),
+      sendMessage: async (text, threadId) => this.sendMessage(chatId, store, text, threadId),
       askAgent: async (prompt): Promise<string> =>
         generateAgentReply({
           input: prompt,

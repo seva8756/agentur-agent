@@ -29,6 +29,7 @@ export const runSkillToolTool: AgentTool<z.output<typeof argsSchema>> = {
       httpMaxResponseBytes: context.httpMaxResponseBytes ?? 1048576,
       mcp: context.mcp,
     });
+    if (result?.send) context.outbox?.push(result);
     return JSON.stringify({
       ok: result?.ok ?? true,
       skillId: skill.id,

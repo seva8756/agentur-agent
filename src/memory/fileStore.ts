@@ -102,6 +102,7 @@ export async function initializeDataDir(store: FileStore): Promise<void> {
     store.ensureDir('chat', 'lists'),
     store.ensureDir('skills', 'drafts'),
     store.ensureDir('skills', 'enabled'),
+    store.ensureDir('artifacts'),
     store.ensureDir('integrations', 'mcp'),
     store.ensureDir('cron'),
   ]);

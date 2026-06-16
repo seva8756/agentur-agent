@@ -231,6 +231,7 @@ SDK доступен только через `ctx.api`:
 - `ctx.api.lists.list/append/clear`;
 - `ctx.api.memory.rememberFact/saveDecision`;
 - `ctx.api.http.request/get/post/put/patch/delete`;
+- `ctx.api.artifacts.createText/createBase64/get/readText`;
 - `ctx.api.secrets.get`;
 - `ctx.api.log`;
 - `ctx.api.sleep`.
@@ -248,6 +249,29 @@ return {
 ```
 
 `reply: null` означает: tool успешно завершился, но отвечать нечего.
+
+### Artifacts
+
+Skills и agent tools могут создавать chat-local файлы без публичной ссылки. Файл сохраняется в `artifacts/<artifact_id>/`, а наружу передается только `artifactId`.
+
+```js
+const artifact = await ctx.api.artifacts.createText({
+  filename: "index.html",
+  mimeType: "text/html",
+  text: "<h1>Hello</h1>"
+});
+
+return {
+  ok: true,
+  send: {
+    kind: "file",
+    source: { type: "artifact", artifactId: artifact.id },
+    caption: "HTML готов"
+  }
+};
+```
+
+Для бинарных файлов используйте `createBase64({ filename, mimeType, base64 })`. Старый формат `send: { kind, url }` продолжает работать для публичных http/https URL. Для обычных файлов используйте `kind: "file"`.
 
 ## Safe HTTP
 

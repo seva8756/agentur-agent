@@ -15,6 +15,7 @@ import { readIdentity, writeIdentity } from '../../src/memory/identity';
 import { readChatSettings, setReplyMode } from '../../src/memory/chatSettings';
 import { smoothMood, defaultMood, writeMood } from '../../src/memory/moodDiary';
 import { appendRecentMessage } from '../../src/memory/recentMessages';
+import { createTextArtifact, readArtifactText } from '../../src/memory/artifactStore';
 import { AgentScheduler } from '../../src/scheduler/scheduler';
 import { runCronJob } from '../../src/scheduler/jobRuntime';
 import { cronJobSchema } from '../../src/scheduler/schema';
@@ -24,9 +25,12 @@ import { skillResultText, textSkillResult } from '../../src/skills/result';
 import { skillPackageSchema, SkillPackage } from '../../src/skills/schema';
 import { runSkill } from '../../src/skills/runtime';
 import { ToolRegistry } from '../../src/tools/registry';
-import { AgentTool, toOpenAITool } from '../../src/tools/types';
+import { AgentTool, ToolContext, toOpenAITool } from '../../src/tools/types';
 import { createCronJobTool } from '../../src/tools/implementations/createCronJob';
 import { createSkillPackageDraftTool } from '../../src/tools/implementations/createSkillPackageDraft';
+import { createArtifactTool } from '../../src/tools/implementations/createArtifact';
+import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
+import { sendArtifactTool } from '../../src/tools/implementations/sendArtifact';
 import { runSkillToolTool } from '../../src/tools/implementations/runSkillTool';
 import { listSkillPackagesTool } from '../../src/tools/implementations/listSkillPackages';
 import { routeMessage } from '../../src/telegram/messageRouter';
@@ -576,6 +580,36 @@ describe('file store', () => {
   });
 });
 
+describe('artifacts', () => {
+  it('creates and reads chat-local text artifacts', async () => {
+    const { store } = await tempStore();
+    const meta = await createTextArtifact(store, {
+      filename: 'index.html',
+      mimeType: 'text/html',
+      text: '<h1>Hello</h1>',
+    }, { kind: 'agent' });
+    expect(meta.filename).toBe('index.html');
+    const read = await readArtifactText(store, meta.id);
+    expect(read.text).toBe('<h1>Hello</h1>');
+    expect(read.truncated).toBe(false);
+  });
+
+  it('lets agent tools create, read, and queue artifacts', async () => {
+    const { store, scheduler } = await tempStore();
+    const context: ToolContext = { store, scheduler, timezone: 'Europe/Moscow', outbox: [] };
+    const created = JSON.parse(await createArtifactTool.execute({
+      filename: 'note.txt',
+      mimeType: 'text/plain',
+      text: 'hello',
+    }, context));
+    const read = JSON.parse(await readArtifactTool.execute({ artifactId: created.artifact.id, mode: 'text' }, context));
+    expect(read.text).toBe('hello');
+    const queued = JSON.parse(await sendArtifactTool.execute({ artifactId: created.artifact.id, kind: 'file' }, context));
+    expect(queued.send.source).toEqual({ type: 'artifact', artifactId: created.artifact.id });
+    expect(context.outbox?.[0]?.send).toEqual(queued.send);
+  });
+});
+
 describe('chat identity', () => {
   it('sets identity through command and injects it into system prompt', async () => {
     const { store, config, scheduler } = await tempStore();
@@ -770,9 +804,10 @@ describe('micro-skills', () => {
       createdAt: new Date().toISOString(),
     }));
     await enableSkill(store, 'Photo Tool');
+    const context: ToolContext = { store, timezone: 'Europe/Moscow', outbox: [] };
     const result = await runSkillToolTool.execute(
       { skillId: 'Photo Tool', toolName: 'main', args: {}, input: 'сгенерь кота' },
-      { store, timezone: 'Europe/Moscow' },
+      context,
     );
     expect(JSON.parse(result)).toEqual({
       ok: true,
@@ -784,6 +819,7 @@ describe('micro-skills', () => {
       send: { kind: 'photo', url: 'https://cdn.example.com/cat.png', caption: 'Кот' },
       error: null,
     });
+    expect(context.outbox?.[0]?.send).toEqual({ kind: 'photo', url: 'https://cdn.example.com/cat.png', caption: 'Кот' });
   });
 
   it('runs scripted skill in sandbox with scoped storage', async () => {
@@ -840,7 +876,7 @@ describe('micro-skills', () => {
       code: `async () => ({
         reply: 'Документ готов',
         send: {
-          kind: 'document',
+          kind: 'file',
           url: 'https://cdn.example.com/report.pdf',
           caption: 'Отчёт',
           filename: 'report.pdf'
@@ -853,10 +889,49 @@ describe('micro-skills', () => {
     const result = await runSkill(store, skill, msg({ text: '/media' }));
     expect(result?.reply).toBe('Документ готов');
     expect(result?.send).toEqual({
-      kind: 'document',
+      kind: 'file',
       url: 'https://cdn.example.com/report.pdf',
       caption: 'Отчёт',
       filename: 'report.pdf',
+    });
+  });
+
+  it('supports scripted artifact send results', async () => {
+    const { store } = await tempStore();
+    const skill = microSkillSchema.parse({
+      id: 'html_sender',
+      title: 'HTML Sender',
+      enabled: true,
+      trigger: { type: 'command', command: 'html' },
+      code: `async (ctx) => {
+        const artifact = await ctx.api.artifacts.createText({
+          filename: 'index.html',
+          mimeType: 'text/html',
+          text: '<h1>Hi</h1>'
+        });
+        return {
+          reply: 'HTML готов',
+          send: {
+            kind: 'file',
+            source: { type: 'artifact', artifactId: artifact.id },
+            caption: 'index.html'
+          }
+        };
+      }`,
+      permissions: { httpOrigins: [] },
+      version: 1,
+      createdAt: new Date().toISOString(),
+    });
+    const result = await runSkill(store, skill, msg({ text: '/html' }));
+    const artifactId = result?.send?.kind !== 'message' && result?.send?.source?.type === 'artifact'
+      ? result.send.source.artifactId
+      : '';
+    expect(artifactId).toMatch(/^art_/);
+    expect((await readArtifactText(store, artifactId)).text).toBe('<h1>Hi</h1>');
+    expect(result?.send).toEqual({
+      kind: 'file',
+      source: { type: 'artifact', artifactId },
+      caption: 'index.html',
     });
   });
 

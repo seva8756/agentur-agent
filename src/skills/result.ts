@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { artifactFilenameSchema, artifactIdSchema } from '../memory/artifactStore';
 
 export const SKILL_REPLY_MAX_CHARS = 8192;
 export const SKILL_MEDIA_CAPTION_MAX_CHARS = 1024;
@@ -6,35 +7,35 @@ export const SKILL_MEDIA_FILENAME_MAX_CHARS = 120;
 
 const safeHttpUrlSchema = z.string().url().refine(isSafePublicHttpUrl, 'URL must be public http/https');
 const captionSchema = z.string().max(SKILL_MEDIA_CAPTION_MAX_CHARS);
-const filenameSchema = z.string()
-  .max(SKILL_MEDIA_FILENAME_MAX_CHARS)
-  .regex(/^[^/\\\0]+$/)
-  .optional();
+const filenameSchema = artifactFilenameSchema.max(SKILL_MEDIA_FILENAME_MAX_CHARS).optional();
 
-export const skillSendSchema = z.discriminatedUnion('kind', [
+const sendSourceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('url'), url: safeHttpUrlSchema }),
+  z.object({ type: z.literal('artifact'), artifactId: artifactIdSchema }),
+]);
+
+const mediaSendBaseSchema = z.object({
+  url: safeHttpUrlSchema.optional(),
+  source: sendSourceSchema.optional(),
+  caption: captionSchema.optional(),
+  filename: filenameSchema,
+});
+
+function mediaSendSchema<TKind extends 'photo' | 'file' | 'video'>(kind: TKind) {
+  return z.object({ kind: z.literal(kind) })
+    .merge(mediaSendBaseSchema)
+    .refine((value) => Boolean(value.url || value.source), 'media send requires url or source');
+}
+
+export const skillSendSchema = z.union([
   z.object({
     kind: z.literal('message'),
     text: z.string().max(SKILL_REPLY_MAX_CHARS).optional(),
     caption: captionSchema.optional(),
   }),
-  z.object({
-    kind: z.literal('photo'),
-    url: safeHttpUrlSchema,
-    caption: captionSchema.optional(),
-    filename: filenameSchema,
-  }),
-  z.object({
-    kind: z.literal('document'),
-    url: safeHttpUrlSchema,
-    caption: captionSchema.optional(),
-    filename: filenameSchema,
-  }),
-  z.object({
-    kind: z.literal('video'),
-    url: safeHttpUrlSchema,
-    caption: captionSchema.optional(),
-    filename: filenameSchema,
-  }),
+  mediaSendSchema('photo'),
+  mediaSendSchema('file'),
+  mediaSendSchema('video'),
 ]);
 
 export const skillRunResultSchema = z.object({
@@ -75,7 +76,13 @@ export function skillResultText(result: SkillRunResult | null | undefined): stri
   if (reply) return reply;
   if (!result.send) return null;
   if (result.send.kind === 'message') return result.send.text?.trim() || result.send.caption?.trim() || null;
-  return result.send.caption?.trim() || result.send.url;
+  return result.send.caption?.trim() || result.send.url || artifactText(result.send.source);
+}
+
+function artifactText(source: z.output<typeof sendSourceSchema> | undefined): string | null {
+  if (!source) return null;
+  if (source.type === 'url') return source.url;
+  return source.artifactId;
 }
 
 function isSafePublicHttpUrl(value: string): boolean {

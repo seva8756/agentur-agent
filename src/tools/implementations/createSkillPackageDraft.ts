@@ -30,10 +30,11 @@ export const createSkillPackageDraftTool: AgentTool<z.output<typeof argsSchema>>
   description: [
     'Create a disabled chat-local sandbox skill from natural language.',
     'Generate SKILL.md instructions, skill.json metadata, and plugin.js with one or more tools.',
-    'The skill runtime is always quickjs. The plugin tool signature is toolName(ctx, args). Use ctx.api.storage, ctx.api.lists, ctx.api.memory, ctx.api.http, ctx.api.mcp, ctx.api.secrets, ctx.api.log, ctx.api.sleep.',
+    'The skill runtime is always quickjs. The plugin tool signature is toolName(ctx, args). Use ctx.api.storage, ctx.api.lists, ctx.api.memory, ctx.api.http, ctx.api.artifacts, ctx.api.mcp, ctx.api.secrets, ctx.api.log, ctx.api.sleep.',
     'SDK contract: export default {tools:{async name(ctx,args){...}}}; SDK is only ctx.api, never a third api arg; HTTP returns {ok,status,text,json,url}; use ctx.api.http.get/post/put/patch/delete/request; secrets/storage are sync, http/lists/memory/sleep are async.',
     'MCP SDK: ctx.api.mcp.listServers(), listTools(serverId), callTool(serverId, toolName, args), readResource(serverId, uri). Use only already connected MCP servers/tools; never connect/spawn/register MCP servers in plugin.js.',
     'Result contract: return {ok:true, reply?: string|null, data?: any, send?: media, error?: {code,message}}; use reply:null when done silently.',
+    'Artifact/file contract: create files with ctx.api.artifacts.createText({filename,mimeType,text}) or createBase64({filename,mimeType,base64}); send them with send:{kind:"file", source:{type:"artifact", artifactId: artifact.id}, caption?, filename?}. For images use kind:"photo"; for videos use kind:"video". Never use kind:"artifact".',
     'Tiny example: export default {tools:{async check(ctx,args){const key=ctx.api.secrets.get("KEY"); const res=await ctx.api.http.get("https://example.com/api",{headers:{Authorization:"Bearer "+key}}); const value=res.json&&res.json.value!==undefined?res.json.value:res.text; return {ok:true, reply:String(value)}}}};',
     'No Node.js APIs, no fs/process/require/import/fetch/eval/Function.',
     'Default to triggers: [] so natural-language requests are selected semantically through whenToUse.',

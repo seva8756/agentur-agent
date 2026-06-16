@@ -220,6 +220,39 @@ await ctx.api.memory.rememberFact("Пользователь любит коро�
 await ctx.api.memory.saveDecision("Решили проверять отчеты по пятницам.");
 ```
 
+### Artifacts
+
+Artifacts — chat-local файлы, которые можно создать из skill и отправить через общий `send` контракт. Skill не получает прямой filesystem access: он создает файл через SDK и дальше передает только `artifactId`.
+
+```js
+const artifact = await ctx.api.artifacts.createText({
+  filename: "index.html",
+  mimeType: "text/html",
+  text: "<h1>Hello</h1>"
+});
+
+return {
+  ok: true,
+  send: {
+    kind: "file",
+    source: { type: "artifact", artifactId: artifact.id },
+    caption: "HTML готов"
+  }
+};
+```
+
+Для бинарников:
+
+```js
+const image = await ctx.api.artifacts.createBase64({
+  filename: "square.png",
+  mimeType: "image/png",
+  base64: "..."
+});
+```
+
+`ctx.api.artifacts.get(artifactId)` читает metadata, `ctx.api.artifacts.readText(artifactId)` читает text-like artifacts с лимитом. Старый media payload с `url: "https://..."` остается валидным только для публичных http/https URL.
+
 ### Secrets
 
 Только объявленные в `skill.json` secrets доступны skill.
@@ -355,7 +388,7 @@ return {
   ok: true,
   reply: "Документ готов.",
   send: {
-    kind: "document",
+    kind: "file",
     url: "https://cdn.example.com/report.pdf",
     caption: "Отчет",
     filename: "report.pdf"
@@ -363,7 +396,7 @@ return {
 };
 ```
 
-Поддерживаются `message`, `photo`, `document`, `video`. URL должен быть публичным `http/https`, не localhost/private IP.
+Поддерживаются `message`, `file`, `photo`, `video`. URL должен быть публичным `http/https`, не localhost/private IP. Для локально созданных файлов используйте `source: { type: "artifact", artifactId }`; не используйте `kind: "artifact"`.
 
 ## Forbidden
 

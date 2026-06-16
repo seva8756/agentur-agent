@@ -119,7 +119,7 @@ async function handleIncomingChatMessage(
     stopTyping();
   }
   if (!reply || !ctx.message) return;
-  const sent = await replySkillResult(ctx, reply, ctx.message.message_id, message.threadId);
+  const sent = await replySkillResult(ctx, runtime.store, reply, ctx.message.message_id, message.threadId);
   await appendRecentMessage(runtime.store, {
     id: sent.message_id,
     chatId: String(sent.chat.id),
@@ -139,7 +139,9 @@ function messageTextForMemory(result: Awaited<ReturnType<typeof routeMessage>>):
   if (result.reply?.trim()) return result.reply.trim();
   if (!result.send) return '';
   if (result.send.kind === 'message') return result.send.text ?? result.send.caption ?? '';
-  return [result.send.caption, result.send.url].filter(Boolean).join('\n');
+  const artifactId = result.send.source?.type === 'artifact' ? result.send.source.artifactId : undefined;
+  const url = result.send.url ?? (result.send.source?.type === 'url' ? result.send.source.url : undefined);
+  return [result.send.caption, url, artifactId].filter(Boolean).join('\n');
 }
 
 function isIdentityDocument(fileName: string | undefined, mimeType: string | undefined): boolean {
