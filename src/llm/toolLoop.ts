@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { formatLogError, logger } from '../utils/logger';
 import { ToolRegistry } from '../tools/registry';
 import { toOpenAITool, ToolContext } from '../tools/types';
+import { isRetryableLlmTransportError } from './errors';
 
 export async function runToolLoop(params: {
   client: OpenAI;
@@ -12,16 +13,14 @@ export async function runToolLoop(params: {
   registry: ToolRegistry;
   context: ToolContext;
   maxSteps: number;
+  completionRetries?: number;
 }): Promise<string> {
-  const messages: ChatCompletionMessageParam[] = [...params.messages];
   const tools = params.registry.list().map(toOpenAITool);
+  const messages: ChatCompletionMessageParam[] = tools.length
+    ? withNativeToolCallingNotice(params.messages)
+    : [...params.messages];
   for (let step = 0; step < params.maxSteps; step += 1) {
-    const response = await params.client.chat.completions.create({
-      model: params.model,
-      messages,
-      tools,
-      tool_choice: 'auto',
-    });
+    const response = await createCompletionWithRetry(params, messages, tools);
     const message = response.choices[0]?.message;
     if (!message) return '';
     if (!message.tool_calls?.length) return message.content ?? '';
@@ -44,6 +43,63 @@ export async function runToolLoop(params: {
     }
   }
   return 'Не смог завершить действие: достигнут лимит внутренних действий.';
+}
+
+function withNativeToolCallingNotice(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
+  const notice: ChatCompletionMessageParam = {
+    role: 'system',
+    content: [
+      'Native tool calling is available for this turn.',
+      'When a tool is needed, use only the API-provided tool_calls/function-calling mechanism.',
+      'Do not write tool calls, function calls, tool arguments, internal action markup, XML-style tags, or JSON tool invocations in assistant text.',
+      'If a required tool cannot be called natively, say that the action cannot be completed rather than emitting a textual tool call.',
+    ].join(' '),
+  };
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  if (lastUserIndex < 0) return [...messages, notice];
+  return [
+    ...messages.slice(0, lastUserIndex),
+    notice,
+    ...messages.slice(lastUserIndex),
+  ];
+}
+
+async function createCompletionWithRetry(
+  params: {
+    client: OpenAI;
+    model: string;
+    completionRetries?: number;
+  },
+  messages: ChatCompletionMessageParam[],
+  tools: ReturnType<typeof toOpenAITool>[],
+) {
+  const maxAttempts = Math.max(1, (params.completionRetries ?? 0) + 1);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await params.client.chat.completions.create({
+        model: params.model,
+        messages,
+        tools,
+        tool_choice: 'auto',
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableLlmTransportError(error)) throw error;
+      logger.warn('LLM tool loop completion failed; retrying with tools', {
+        attempt,
+        maxAttempts,
+        error: formatLogError(error),
+      });
+    }
+  }
+  throw lastError;
 }
 
 function formatToolError(toolName: string, error: unknown): string {

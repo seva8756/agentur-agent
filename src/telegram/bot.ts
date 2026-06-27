@@ -2,6 +2,7 @@ import { Bot, Context } from 'grammy';
 import { AppConfig } from '../config';
 import { ChatRuntimeManager } from '../agent/chatRuntime';
 import { decideReply } from '../agent/replyPolicy';
+import { isLlmContextLengthError } from '../llm/errors';
 import { appendRecentMessage, readRecentMessages } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
 import { writeIdentity } from '../memory/identity';
@@ -113,6 +114,15 @@ async function handleIncomingChatMessage(
     });
   } catch (error) {
     logger.error('Could not create Telegram reply', error);
+    if (isLlmContextLengthError(error)) {
+      await replyMarkdown(
+        ctx,
+        'Не смог получить ответ от модели: превышен лимит контекста. Попробуй сократить запрос или историю/вложения.',
+        ctx.message?.message_id,
+        message.threadId,
+      );
+      return;
+    }
     await replyMarkdown(ctx, 'Не смог получить ответ от модели: провайдер не ответил вовремя 😔', ctx.message?.message_id, message.threadId);
     return;
   } finally {

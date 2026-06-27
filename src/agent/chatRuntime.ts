@@ -9,6 +9,7 @@ import { loadEnabledSkills } from '../skills/loader';
 import { SkillRunResult, textSkillResult } from '../skills/result';
 import { runSkillTool } from '../skills/runtime';
 import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
+import { ChatMessage } from '../telegram/telegramTypes';
 import { ToolRegistry } from '../tools/registry';
 import { generateAgentReply } from './respond';
 
@@ -48,7 +49,7 @@ export class ChatRuntimeManager {
     const runtime: { scheduler?: AgentScheduler } = {};
     const scheduler = new AgentScheduler(store, {
       sendMessage: async (text, threadId) => this.sendMessage(chatId, store, text, threadId),
-      askAgent: async (prompt): Promise<string> =>
+      askAgent: async (prompt, job): Promise<string> =>
         generateAgentReply({
           input: prompt,
           config: this.config,
@@ -63,6 +64,7 @@ export class ChatRuntimeManager {
             httpTimeoutMs: this.config.skillHttpTimeoutMs,
             httpMaxRequestBytes: this.config.skillHttpMaxRequestBytes,
             httpMaxResponseBytes: this.config.skillHttpMaxResponseBytes,
+            currentMessage: buildCronMessage(chatId, prompt, job.threadId),
             trustedSkills: this.trustedSkills,
             mcp: this.mcp,
           },
@@ -127,6 +129,19 @@ export class ChatRuntimeManager {
   getChatDataDir(chatId: string): string {
     return path.join(this.config.agentDataDir, 'chats', encodeChatDir(chatId));
   }
+}
+
+function buildCronMessage(chatId: string, text: string, threadId?: number | null): ChatMessage {
+  return {
+    messageId: Date.now(),
+    chatId,
+    threadId: threadId ?? undefined,
+    chatType: 'group',
+    text,
+    date: new Date(),
+    username: 'cron',
+    displayName: 'Cron',
+  };
 }
 
 export function encodeChatDir(chatId: string): string {

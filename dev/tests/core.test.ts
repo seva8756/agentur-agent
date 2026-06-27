@@ -534,6 +534,78 @@ describe('context trimming', () => {
     expect(reply).toContain('не принимает изображения');
   });
 
+  it('retries with reduced context when the provider rejects an oversized prompt', async () => {
+    const { store, config, scheduler } = await tempStore();
+    let calls = 0;
+    let fallbackSawNotice = false;
+    let fallbackSawTools = false;
+    const reply = await generateAgentReply({
+      input: 'ответь по доступному контексту',
+      config: { ...config, contextMaxChars: 6000, llmSupportsTools: true },
+      store,
+      tools: new ToolRegistry(),
+      toolContext: { store, scheduler, timezone: 'Europe/Moscow' },
+      llm: {
+        chat: async (messages, options) => {
+          calls += 1;
+          if (calls === 1) {
+            throw {
+              status: 400,
+              message: "This model's maximum context length is 202752 tokens. However, your prompt contains too many tokens.",
+            };
+          }
+          fallbackSawNotice = messages.some((message) =>
+            typeof message.content === 'string' && message.content.includes('exceeded the available context window')
+          );
+          fallbackSawTools = Boolean(options?.tools);
+          return 'Контекста не хватило, поэтому отвечаю по доступной части.';
+        },
+        minimalCheck: async () => 'ok',
+        toolCheck: async () => false,
+      },
+    });
+    expect(calls).toBe(2);
+    expect(fallbackSawNotice).toBe(true);
+    expect(fallbackSawTools).toBe(false);
+    expect(reply).toContain('Контекста не хватило');
+  });
+
+  it('drops image input on context-limit fallback', async () => {
+    const { store, config, scheduler } = await tempStore();
+    let calls = 0;
+    let fallbackSawImage = false;
+    const reply = await generateAgentReply({
+      input: 'Что на картинке?',
+      image: { dataUrl: 'data:image/png;base64,AAAA' },
+      config,
+      store,
+      tools: new ToolRegistry(),
+      toolContext: { store, scheduler, timezone: 'Europe/Moscow' },
+      llm: {
+        chat: async (messages) => {
+          calls += 1;
+          if (calls === 1) {
+            throw {
+              status: 400,
+              error: { message: 'context_length_exceeded: prompt contains too many tokens' },
+            };
+          }
+          fallbackSawImage = messages.some((message) =>
+            Array.isArray(message.content) && message.content.some((part) =>
+              typeof part === 'object' && part !== null && 'type' in part && part.type === 'image_url'
+            )
+          );
+          return 'Картинку пришлось опустить из-за лимита контекста.';
+        },
+        minimalCheck: async () => 'ok',
+        toolCheck: async () => false,
+      },
+    });
+    expect(calls).toBe(2);
+    expect(fallbackSawImage).toBe(false);
+    expect(reply).toContain('лимита контекста');
+  });
+
   it('includes enabled micro-skills for semantic tool selection', async () => {
     const { store, config, scheduler } = await tempStore();
     await saveDraftSkill(store, microSkillSchema.parse({
@@ -1292,6 +1364,35 @@ describe('cron schema', () => {
     expect(sent).toEqual([{ text: 'hello:cron input', threadId: 42 }]);
   });
 
+  it('passes cron job context to agent actions', async () => {
+    const job = cronJobSchema.parse({
+      id: 'cron_agent_test',
+      title: 'Ask agent',
+      enabled: true,
+      cron: '* * * * *',
+      timezone: 'UTC',
+      threadId: 42,
+      action: { type: 'ask_agent_and_send', prompt: 'cron prompt' },
+      createdAt: new Date().toISOString(),
+    });
+    const agentCalls: Array<{ prompt: string; threadId?: number | null }> = [];
+    const sent: Array<{ text: string; threadId?: number | null }> = [];
+
+    await runCronJob(job, {
+      sendMessage: async (result, threadId) => {
+        sent.push({ text: skillResultText(result) ?? '', threadId });
+      },
+      askAgent: async (prompt, passedJob) => {
+        agentCalls.push({ prompt, threadId: passedJob.threadId });
+        return 'agent reply';
+      },
+      runSkillTool: async () => null,
+    });
+
+    expect(agentCalls).toEqual([{ prompt: 'cron prompt', threadId: 42 }]);
+    expect(sent).toEqual([{ text: 'agent reply', threadId: 42 }]);
+  });
+
   it('keeps cron silent when micro-skill has no reply', async () => {
     const sent: string[] = [];
     await runCronJob(
@@ -1339,6 +1440,42 @@ describe('output limiter', () => {
 });
 
 describe('tool loop', () => {
+  it('adds a native tool-calling instruction when tools are available', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'noop',
+      description: 'noop',
+      schema: z.object({}),
+      execute: async () => 'ok',
+    });
+    let sawNotice = false;
+    const fakeClient = {
+      chat: {
+        completions: {
+          create: async ({ messages }: any) => {
+            sawNotice = messages.some((message: any) =>
+              message.role === 'system'
+              && String(message.content).includes('Native tool calling is available')
+              && String(message.content).includes('use only the API-provided tool_calls')
+              && String(message.content).includes('Do not write tool calls')
+            );
+            return { choices: [{ message: { role: 'assistant', content: 'ok' } }] };
+          },
+        },
+      },
+    };
+    const result = await runToolLoop({
+      client: fakeClient as any,
+      model: 'test',
+      messages: [{ role: 'system', content: 'base' }, { role: 'user', content: 'go' }],
+      registry,
+      context: { store: (await tempStore()).store, timezone: 'UTC' },
+      maxSteps: 2,
+    });
+    expect(result).toBe('ok');
+    expect(sawNotice).toBe(true);
+  });
+
   it('stops at max steps', async () => {
     const registry = new ToolRegistry();
     const tool: AgentTool<Record<string, never>> = {
@@ -1410,6 +1547,56 @@ describe('tool loop', () => {
     expect(result).toBe('handled');
     expect(calls).toBe(2);
     expect(JSON.parse(toolMessages[0]!).error.code).toBe('invalid_tool_arguments');
+  });
+
+  it('retries transient LLM failures inside the tool loop without rerunning tools', async () => {
+    const registry = new ToolRegistry();
+    const execute = vi.fn(async () => 'tool result');
+    registry.register({
+      name: 'side_effect',
+      description: 'side effect',
+      schema: z.object({}),
+      execute,
+    });
+    let calls = 0;
+    const fakeClient = {
+      chat: {
+        completions: {
+          create: async ({ messages }: any) => {
+            calls += 1;
+            if (!messages.some((message: any) => message.role === 'tool')) {
+              return {
+                choices: [{
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{
+                      id: 'call-1',
+                      type: 'function',
+                      function: { name: 'side_effect', arguments: '{}' },
+                    }],
+                  },
+                }],
+              };
+            }
+            if (calls === 2) throw new Error('Request timed out.');
+            return { choices: [{ message: { role: 'assistant', content: 'handled after retry' } }] };
+          },
+        },
+      },
+    };
+    const result = await runToolLoop({
+      client: fakeClient as any,
+      model: 'test',
+      messages: [{ role: 'user', content: 'go' }],
+      registry,
+      context: { store: (await tempStore()).store, timezone: 'UTC' },
+      maxSteps: 3,
+      completionRetries: 1,
+    });
+    expect(result).toBe('handled after retry');
+    expect(calls).toBe(3);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });
 

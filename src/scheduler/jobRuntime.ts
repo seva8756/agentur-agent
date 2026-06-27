@@ -3,7 +3,7 @@ import { CronJobConfig } from './schema';
 
 export type CronRuntimeDeps = {
   sendMessage: (result: SkillRunResult, threadId?: number | null) => Promise<void>;
-  askAgent: (prompt: string) => Promise<string>;
+  askAgent: (prompt: string, job: CronJobConfig) => Promise<string>;
   runSkillTool: (skillId: string, toolName: string, args: Record<string, unknown>, text: string, threadId?: number | null) => Promise<SkillRunResult | null>;
 };
 
@@ -13,7 +13,7 @@ export async function runCronJob(job: CronJobConfig, deps: CronRuntimeDeps): Pro
     return;
   }
   if (job.action.type === 'ask_agent_and_send') {
-    const answer = await deps.askAgent(job.action.prompt);
+    const answer = await deps.askAgent(job.action.prompt, job);
     await deps.sendMessage(textSkillResult(answer)!, job.threadId);
     return;
   }

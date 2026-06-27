@@ -1,4 +1,5 @@
 import { AppConfig } from '../config';
+import { isLlmContextLengthError } from '../llm/errors';
 import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { SkillRunResult, skillResultText, textSkillResult } from '../skills/result';
@@ -7,6 +8,7 @@ import { SkillPackage } from '../skills/schema';
 import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ToolRegistry } from '../tools/registry';
 import { ToolContext } from '../tools/types';
+import { formatLogError, logger } from '../utils/logger';
 import { buildChatContext, trimMessagesToBudget } from './contextBuilder';
 import { limitOutput } from './outputLimiter';
 
@@ -51,7 +53,7 @@ export async function generateAgentResult(params: {
     ? [...context.slice(0, -1), { role: 'system' as const, content: [skillsContext, artifactContext].join('\n') }, context[context.length - 1]]
     : [...context.slice(0, -1), { role: 'system' as const, content: artifactContext }, context[context.length - 1]];
   const messages = attachImageToLastUserMessage(trimMessagesToBudget(baseMessages, params.config.contextMaxChars), params.image?.dataUrl);
-  const text = await chatWithImageFallback({ ...params, toolContext }, messages);
+  const text = await chatWithFallbacks({ ...params, toolContext }, messages);
   const reply = limitOutput(text || 'Не нашёл, что ответить.', params.config.agentMaxReplyChars);
   const queued = outbox.at(-1);
   if (queued?.send) {
@@ -111,7 +113,7 @@ function formatCompactTriggers(skill: SkillPackage): string {
   return values.slice(0, 6).join(', ');
 }
 
-async function chatWithImageFallback(
+async function chatWithFallbacks(
   params: {
     input: string;
     image?: { dataUrl: string };
@@ -130,6 +132,10 @@ async function chatWithImageFallback(
       maxSteps: params.config.agentMaxToolSteps,
     });
   } catch (error) {
+    if (isLlmContextLengthError(error)) {
+      logger.warn('LLM context limit exceeded; retrying with reduced context', { error: formatLogError(error) });
+      return chatWithReducedContextFallback(params, messages);
+    }
     if (!params.image) throw error;
     const reason = humanErrorReason(error);
     const fallbackContext = await buildChatContext(
@@ -158,6 +164,59 @@ async function chatWithImageFallback(
   }
 }
 
+async function chatWithReducedContextFallback(
+  params: {
+    config: AppConfig;
+    llm: LlmAdapter;
+    toolContext: ToolContext;
+  },
+  messages: ReturnType<typeof trimMessagesToBudget>,
+): Promise<string> {
+  const fallbackBudget = Math.max(2000, Math.floor(params.config.contextMaxChars / 3));
+  const reducedMessages = trimMessagesToBudget(
+    withContextLimitNotice(trimMessagesToBudget(stripImageInputs(messages), fallbackBudget)),
+    fallbackBudget,
+  );
+  return params.llm.chat(reducedMessages, {
+    tools: undefined,
+    toolContext: params.toolContext,
+    maxSteps: params.config.agentMaxToolSteps,
+  });
+}
+
+function withContextLimitNotice(messages: ReturnType<typeof trimMessagesToBudget>): ReturnType<typeof trimMessagesToBudget> {
+  const notice = [
+    'The previous model request exceeded the available context window.',
+    'You are seeing a reduced subset of the chat context and no tools or image input are available in this fallback reply.',
+    'Answer as well as possible from the visible context, and explicitly tell the user that some context was omitted because the model context limit was exceeded.',
+  ].join(' ');
+  const first = messages[0];
+  if (first?.role === 'system') {
+    return [
+      { ...first, content: `${notice}\n\n${messageContentToText(first.content)}` },
+      ...messages.slice(1),
+    ];
+  }
+  return [{ role: 'system', content: notice }, ...messages];
+}
+
+function stripImageInputs(messages: ReturnType<typeof trimMessagesToBudget>): ReturnType<typeof trimMessagesToBudget> {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    const textParts = message.content
+      .filter((part) => typeof part === 'object' && part !== null && 'type' in part && part.type === 'text')
+      .map((part) => 'text' in part && typeof part.text === 'string' ? part.text : '')
+      .filter(Boolean);
+    return {
+      ...message,
+      content: [
+        ...textParts,
+        '[Изображение было опущено: предыдущий запрос превысил лимит контекста модели.]',
+      ].join('\n'),
+    } as typeof message;
+  });
+}
+
 function attachImageToLastUserMessage(messages: ReturnType<typeof trimMessagesToBudget>, dataUrl: string | undefined) {
   if (!dataUrl) return messages;
   const copy = [...messages];
@@ -171,6 +230,12 @@ function attachImageToLastUserMessage(messages: ReturnType<typeof trimMessagesTo
     ],
   } as typeof last;
   return copy;
+}
+
+function messageContentToText(content: ReturnType<typeof trimMessagesToBudget>[number]['content']): string {
+  if (typeof content === 'string') return content;
+  if (!content) return '';
+  return JSON.stringify(content);
 }
 
 function humanErrorReason(error: unknown): string {

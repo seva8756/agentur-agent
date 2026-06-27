@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { AppConfig } from '../config';
 import { logger } from '../utils/logger';
+import { getLlmErrorDetails } from './errors';
 import { runToolLoop } from './toolLoop';
 import { LlmAdapter } from './types';
 
@@ -25,6 +26,7 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
             registry: options.tools,
             context: options.toolContext,
             maxSteps: options.maxSteps ?? config.agentMaxToolSteps,
+            completionRetries: config.llmToolLoopRetries,
           });
         } catch (error) {
           if (!shouldRetryWithoutTools(error)) throw error;
@@ -89,32 +91,13 @@ function withToolFallbackNotice(messages: ChatCompletionMessageParam[]): ChatCom
 }
 
 function shouldRetryWithoutTools(error: unknown): boolean {
-  const candidate = error as {
-    message?: unknown;
-    status?: unknown;
-    code?: unknown;
-    type?: unknown;
-    error?: { message?: unknown; status?: unknown; code?: unknown; type?: unknown };
-  } | undefined;
-  const status = typeof candidate?.status === 'number'
-    ? candidate.status
-    : typeof candidate?.error?.status === 'number'
-      ? candidate.error.status
-      : undefined;
-  const message = [
-    candidate?.message,
-    candidate?.error?.message,
-    candidate?.code,
-    candidate?.error?.code,
-    candidate?.type,
-    candidate?.error?.type,
-  ].filter((item): item is string => typeof item === 'string').join(' ').toLowerCase();
+  const { status, text } = getLlmErrorDetails(error);
   return (
-    message.includes('timed out') ||
-    message.includes('timeout') ||
-    message.includes('tool') ||
-    message.includes('function') ||
-    message.includes('unsupported') ||
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('tool') ||
+    text.includes('function') ||
+    text.includes('unsupported') ||
     status === 408 ||
     status === 429 ||
     (status !== undefined && status >= 500 && status < 600)
