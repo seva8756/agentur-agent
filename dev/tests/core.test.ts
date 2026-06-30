@@ -24,7 +24,7 @@ import { enableSkill, disableSkill, saveDraftSkill, loadDraftSkills, loadEnabled
 import { matchSkill, matchesCommand } from '../../src/skills/matcher';
 import { skillResultText, textSkillResult } from '../../src/skills/result';
 import { skillPackageSchema, SkillPackage } from '../../src/skills/schema';
-import { runSkill } from '../../src/skills/runtime';
+import { runSkill, runSkillTool } from '../../src/skills/runtime';
 import { ToolRegistry } from '../../src/tools/registry';
 import { AgentTool, ToolContext, toOpenAITool } from '../../src/tools/types';
 import { createCronJobTool } from '../../src/tools/implementations/createCronJob';
@@ -1154,6 +1154,30 @@ describe('micro-skills', () => {
       source: { type: 'artifact', artifactId },
       caption: 'index.html',
     }]);
+  });
+
+  it('allows root helper methods without exposing them as tools', async () => {
+    const { store } = await tempStore();
+    const skill = packageSkill({
+      id: 'helper_skill',
+      title: 'Helper Skill',
+      enabled: true,
+      triggers: [{ type: 'command', command: 'helper', tool: 'main' }],
+      tools: { main: { description: 'Main tool', schema: { type: 'object', properties: {} } } },
+      pluginJs: `export default {
+        formatReply(value) {
+          return 'helper:' + String(value).trim().toUpperCase();
+        },
+        tools: {
+          async main(ctx) {
+            return { ok: true, reply: this.formatReply(ctx.item) };
+          }
+        }
+      };`,
+    });
+
+    expect(skillResultText(await runSkill(store, skill, msg({ text: '/helper hello' })))).toBe('helper:HELLO');
+    expect(skillResultText(await runSkillTool(store, skill, 'formatReply', { value: 'hello' }, msg({ text: '/helper hello' })))).toContain('не содержит tool');
   });
 
   it('rejects scripted media send results with non-public URLs', async () => {

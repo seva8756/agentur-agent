@@ -571,7 +571,7 @@ function wrapPlugin(pluginSource: string): string {
   const tool = plugin.tools[toolName];
   if (typeof tool !== 'function') throw new Error('tool not found: ' + toolName);
   try {
-    const result = await tool.call(plugin.tools, ctx, args);
+    const result = await tool.call(plugin, ctx, args);
     return JSON.stringify(result || {});
   } catch (error) {
     return JSON.stringify({ __error: error && error.message ? String(error.message) : String(error) });

@@ -26,7 +26,7 @@ export const TOOL_PROMPTS = {
   createSkillPackageDraft: {
     whenToUse: 'Required routing guidance: when the agent should use this skill, and when it should not. Be specific enough to avoid broad accidental activation.',
     skillMd: 'SKILL.md instructions for when and how to use this skill',
-    pluginJs: 'Sandbox plugin.js. Must export/default { tools: { toolName(ctx,args) { ... } } }. Use ctx.api for SDK calls.',
+    pluginJs: 'Sandbox plugin.js. Export one object: { helper(){...}, tools:{ toolName(ctx,args){...} } }. Only tools.* are public; root helpers are private and called as this.helper(). Do not define helpers outside the exported object. Use ctx.api for SDK calls.',
     tools: 'Tool specs exposed by plugin.js',
     triggers: 'Default to [] for normal skills. Do not create Telegram slash commands unless the user explicitly asked to bind a slash command. Only explicit slash commands are supported, e.g. {type:"command",command:"/balance",tool:"check"}. Plain strings must start with /. Never use phrase, keyword, contains, or natural-language triggers.',
     secrets: 'Secret key names required by the package',
@@ -34,7 +34,7 @@ export const TOOL_PROMPTS = {
       'Create a disabled chat-local sandbox skill from natural language.',
       'Generate SKILL.md instructions, skill.json metadata, and plugin.js with one or more tools.',
       'The skill runtime is always quickjs. The plugin tool signature is toolName(ctx, args). Use ctx.api.storage, ctx.api.lists, ctx.api.memory, ctx.api.http, ctx.api.artifacts, ctx.api.mcp, ctx.api.secrets, ctx.api.log, ctx.api.sleep.',
-      'SDK contract: export default {tools:{async name(ctx,args){...}}}; SDK is only ctx.api, never a third api arg; HTTP returns {ok,status,text,json,url}; use ctx.api.http.get/post/put/patch/delete/request; secrets/storage are sync, http/lists/memory/sleep are async.',
+      'SDK contract: plugin.js must export/default one object expression: export default {helper(){...}, tools:{async name(ctx,args){this.helper(); ...}}}. The sandbox calls tools with this=exported object; only tools.* are public skill tools. SDK is only ctx.api, never a third api arg; HTTP returns {ok,status,text,json,url}; use ctx.api.http.get/post/put/patch/delete/request. Sync APIs: secrets/storage/log. Async APIs: http/lists/memory/artifacts/mcp/sleep.',
       'MCP SDK: ctx.api.mcp.listServers(), listTools(serverId), callTool(serverId, toolName, args), readResource(serverId, uri). Use only already connected MCP servers/tools; never connect/spawn/register MCP servers in plugin.js.',
       'Result contract: return {ok:true, reply?: string|null, data?: any, send?: media[], error?: {code,message}}; send is always an array and may contain one item; use reply:null when done silently.',
       'Artifact/file contract: create files with ctx.api.artifacts.createText({filename,mimeType,text}) or createBase64({filename,mimeType,base64}); return deliverable files as send:[{kind:"file", source:{type:"artifact", artifactId: artifact.id}, caption?, filename?}]. For images use kind:"photo"; for videos use kind:"video". Never use kind:"artifact".',
