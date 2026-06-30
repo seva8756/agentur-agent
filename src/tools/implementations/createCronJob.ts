@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { cronActionSchema, cronJobSchema } from '../../scheduler/schema';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { withPrefix } from '../../utils/slug';
 import { AgentTool } from '../types';
 
@@ -13,8 +14,7 @@ const argsSchema = z.object({
 
 export const createCronJobTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'create_cron_job',
-  description:
-    'Create a disabled cron reminder draft from natural language. Use ASCII id with cron_ prefix if possible; if unsure omit id. The action must be an object. Supported actions: send_static_message, ask_agent_and_send, run_skill_tool with skillId/toolName/args/text/sendResult. User enables it with /agentur cron enable <id>.',
+  description: TOOL_PROMPTS.createCronJob.description,
   schema: argsSchema,
   execute: async (args, context) => {
     if (!context.scheduler) return 'Scheduler is not available';

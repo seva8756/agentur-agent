@@ -1,14 +1,15 @@
 import { z } from 'zod';
 import { findSkill, loadDraftSkills, loadEnabledSkills } from '../../skills/loader';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
 const argsSchema = z.object({
-  name: z.string().optional().describe('Filter by skill name or ID to get full details including plugin.js'),
+  name: z.string().optional().describe(TOOL_PROMPTS.listSkillPackages.name),
 });
 
 export const listSkillPackagesTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'list_skill_packages',
-  description: 'List draft and enabled skills. If name/id is provided, returns full skill details with pluginJs. Otherwise returns a lightweight list without pluginJs.',
+  description: TOOL_PROMPTS.listSkillPackages.description,
   schema: argsSchema,
   execute: async (args, context) => {
     const [drafts, enabled] = await Promise.all([loadDraftSkills(context.store), loadEnabledSkills(context.store)]);

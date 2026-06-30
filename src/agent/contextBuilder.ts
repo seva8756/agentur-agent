@@ -8,7 +8,7 @@ import { readIdentity } from '../memory/identity';
 import { readChatSettings } from '../memory/chatSettings';
 import { formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
 import { readSummary } from '../memory/summary';
-import { buildSystemPrompt } from './promptBuilder';
+import { buildAgentSystemPrompt, buildCurrentTimePrompt, buildLocalMemoryContext, buildLocalMemoryPrompt } from '../prompts/catalog';
 import { formatLocalTime } from '../utils/time';
 
 export type ContextOptions = {
@@ -39,19 +39,20 @@ export async function buildChatContext(
   const recentText = selectRecentForContext(recent, options.recentLimit)
     .map((m) => formatRecentMessageForContext(m, options.recentMessageMaxChars))
     .join('\n');
-  const threadNote = options.currentThreadId
-    ? `Thread=${options.currentThreadId}. Attention! Same thread is direct context; other threads may inform but are not one dialog. Keep this in mind.`
-    : '';
   const context = limitOutput(
-    [`Summary:\n${summary}`, `Facts:\n${factText}`, `Decisions:\n${decisionText}`, threadNote, `Recent chat:\n${recentText}`]
-      .filter((s) => s.trim().length > 0)
-      .join('\n\n'),
+    buildLocalMemoryContext({
+      summary,
+      facts: factText,
+      decisions: decisionText,
+      recentChat: recentText,
+      currentThreadId: options.currentThreadId,
+    }),
     options.maxChars,
   );
   return [
-    { role: 'system', content: buildSystemPrompt(mood, identity, settings.profanityMode) },
-    { role: 'system', content: `Current local time: ${formatLocalTime(options.timezone)} (${options.timezone}). Use this for date/time references.` },
-    { role: 'system', content: `Local chat memory:\n${context}` },
+    { role: 'system', content: buildAgentSystemPrompt(mood, identity, settings.profanityMode) },
+    { role: 'system', content: buildCurrentTimePrompt(formatLocalTime(options.timezone), options.timezone) },
+    { role: 'system', content: buildLocalMemoryPrompt(context) },
     { role: 'user', content: userInput },
   ];
 }

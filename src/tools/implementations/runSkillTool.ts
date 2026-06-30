@@ -3,19 +3,19 @@ import { findSkill, loadEnabledSkills } from '../../skills/loader';
 import { skillResultText } from '../../skills/result';
 import { runSkillTool } from '../../skills/runtime';
 import { ChatMessage } from '../../telegram/telegramTypes';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
 const argsSchema = z.object({
-  skillId: z.string().min(1).describe('Enabled skill id or visible title'),
-  toolName: z.string().min(1).describe('Tool name exposed by the skill'),
-  args: z.record(z.unknown()).optional().default({}).describe('Arguments for the skill tool'),
-  input: z.string().min(1).optional().describe('Optional input text to expose as ctx.text'),
+  skillId: z.string().min(1).describe(TOOL_PROMPTS.runSkillTool.skillId),
+  toolName: z.string().min(1).describe(TOOL_PROMPTS.runSkillTool.toolName),
+  args: z.record(z.unknown()).optional().default({}).describe(TOOL_PROMPTS.runSkillTool.args),
+  input: z.string().min(1).optional().describe(TOOL_PROMPTS.runSkillTool.input),
 });
 
 export const runSkillToolTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'run_skill_tool',
-  description:
-    'Run a tool exposed by an enabled skill. Use this when user intent matches a skill. Returns JSON with ok/reply/data/send/error; data can be used in later tool calls.',
+  description: TOOL_PROMPTS.runSkillTool.description,
   schema: argsSchema,
   execute: async (args, context) => {
     const skills = await loadEnabledSkills(context.store);

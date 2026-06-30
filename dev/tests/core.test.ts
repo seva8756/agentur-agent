@@ -8,7 +8,7 @@ import { loadConfig, AppConfig } from '../../src/config';
 import { buildChatContext, trimMessagesToBudget } from '../../src/agent/contextBuilder';
 import { limitOutput } from '../../src/agent/outputLimiter';
 import { decideReply } from '../../src/agent/replyPolicy';
-import { generateAgentReply } from '../../src/agent/respond';
+import { generateAgentReply, generateAgentResult } from '../../src/agent/respond';
 import { runToolLoop } from '../../src/llm/toolLoop';
 import { FileStore, initializeDataDir } from '../../src/memory/fileStore';
 import { readIdentity, writeIdentity } from '../../src/memory/identity';
@@ -604,6 +604,42 @@ describe('context trimming', () => {
     expect(calls).toBe(2);
     expect(fallbackSawImage).toBe(false);
     expect(reply).toContain('лимита контекста');
+  });
+
+  it('uses the model final reply as queued media caption in agent orchestration', async () => {
+    const { store, config, scheduler } = await tempStore();
+    const result = await generateAgentResult({
+      input: 'сделай аккаунт и пришли файл',
+      config,
+      store,
+      tools: new ToolRegistry(),
+      toolContext: { store, scheduler, timezone: 'Europe/Moscow' },
+      llm: {
+        chat: async (_messages, options) => {
+          options?.toolContext?.outbox?.push({
+            ok: true,
+            reply: 'Skill summary',
+            send: {
+              kind: 'file',
+              url: 'https://cdn.example.com/users.csv',
+              caption: 'Skill caption',
+              filename: 'users.csv',
+            },
+          });
+          return 'Создал аккаунт и приложил CSV.';
+        },
+        minimalCheck: async () => 'ok',
+        toolCheck: async () => false,
+      },
+    });
+
+    expect(result?.reply).toBe('Создал аккаунт и приложил CSV.');
+    expect(result?.send).toEqual({
+      kind: 'file',
+      url: 'https://cdn.example.com/users.csv',
+      caption: 'Создал аккаунт и приложил CSV.',
+      filename: 'users.csv',
+    });
   });
 
   it('includes enabled micro-skills for semantic tool selection', async () => {

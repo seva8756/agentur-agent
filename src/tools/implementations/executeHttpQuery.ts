@@ -2,19 +2,20 @@ import { z } from 'zod';
 import { AgentTool } from '../types';
 import { isPrivateIp, isSafeHost, safeHttpRequest } from '../safeHttp';
 import { logger } from '../../utils/logger';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 
 const argsSchema = z.object({
-  url: z.string().url().describe('The absolute URL to query (http or https only)'),
-  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).default('GET').describe('HTTP method'),
-  headers: z.record(z.string()).optional().describe('Optional HTTP headers'),
-  body: z.string().optional().describe('Optional HTTP request body'),
+  url: z.string().url().describe(TOOL_PROMPTS.executeHttpQuery.url),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).default('GET').describe(TOOL_PROMPTS.executeHttpQuery.method),
+  headers: z.record(z.string()).optional().describe(TOOL_PROMPTS.executeHttpQuery.headers),
+  body: z.string().optional().describe(TOOL_PROMPTS.executeHttpQuery.body),
 });
 
 export { isPrivateIp, isSafeHost };
 
 export const executeHttpQueryTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'execute_http_query',
-  description: 'Execute an HTTP/HTTPS request to explore endpoints or fetch remote data. Strictly restricted from accessing local files or private network addresses.',
+  description: TOOL_PROMPTS.executeHttpQuery.description,
   schema: argsSchema,
   execute: async (args, context) => {
     try {

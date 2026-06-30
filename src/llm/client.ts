@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { AppConfig } from '../config';
 import { logger } from '../utils/logger';
+import { buildToolFallbackNotice, LLM_HEALTH_CHECK_PROMPT, LLM_TOOL_CHECK_PROMPT, LLM_TOOL_CHECK_TOOL_DESCRIPTION } from '../prompts/catalog';
 import { getLlmErrorDetails } from './errors';
 import { runToolLoop } from './toolLoop';
 import { LlmAdapter } from './types';
@@ -41,20 +42,20 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
       return response.choices[0]?.message.content ?? '';
     },
     minimalCheck: async () => {
-      const messages: ChatCompletionMessageParam[] = [{ role: 'user', content: 'Reply with ok.' }];
+      const messages: ChatCompletionMessageParam[] = [{ role: 'user', content: LLM_HEALTH_CHECK_PROMPT }];
       const response = await client.chat.completions.create({ model: config.llmModel, messages, max_tokens: 5 });
       return response.choices[0]?.message.content ?? '';
     },
     toolCheck: async () => {
       const response = await client.chat.completions.create({
         model: config.llmModel,
-        messages: [{ role: 'user', content: 'Call the ping tool.' }],
+        messages: [{ role: 'user', content: LLM_TOOL_CHECK_PROMPT }],
         tools: [
           {
             type: 'function',
             function: {
               name: 'ping',
-              description: 'Harmless test tool',
+              description: LLM_TOOL_CHECK_TOOL_DESCRIPTION,
               parameters: { type: 'object', properties: {}, additionalProperties: false },
             },
           },
@@ -69,11 +70,7 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
 function withToolFallbackNotice(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   const notice: ChatCompletionMessageParam = {
     role: 'system',
-    content: [
-      'Tool calling failed for this turn, so no tools or skill tools are available in this fallback reply.',
-      'Answer directly from the conversation context.',
-      'If the user asked for an action that requires tools, say that the action could not be completed right now.',
-    ].join(' '),
+    content: buildToolFallbackNotice(),
   };
   let lastUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {

@@ -6,6 +6,7 @@ import { isLlmContextLengthError } from '../llm/errors';
 import { appendRecentMessage, readRecentMessages } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
 import { writeIdentity } from '../memory/identity';
+import { buildPhotoDownloadFailureUserPrompt } from '../prompts/catalog';
 import { logger } from '../utils/logger';
 import { routeMessage } from './messageRouter';
 import { replyMarkdown, replySkillResult } from './send';
@@ -309,12 +310,7 @@ function toPhotoFallbackChatMessage(
     fromId: from ? String(from.id) : undefined,
     username: from?.username,
     displayName: [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username,
-    text: [
-      '[изображение не удалось обработать]',
-      caption ? `Подпись: ${caption}` : '',
-      `Причина: ${reason}`,
-      'Ответь пользователю естественно: скажи, что картинку сейчас не получилось проанализировать, и кратко укажи причину.',
-    ].filter(Boolean).join('\n'),
+    text: buildPhotoDownloadFailureUserPrompt(caption, reason),
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
     entities: message.caption_entities,

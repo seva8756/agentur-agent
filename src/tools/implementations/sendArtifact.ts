@@ -1,18 +1,19 @@
 import { z } from 'zod';
 import { readArtifactMeta } from '../../memory/artifactStore';
 import { SkillRunResult } from '../../skills/result';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
 const argsSchema = z.object({
-  artifactId: z.string().min(1).describe('Artifact id to send'),
-  kind: z.enum(['file', 'photo', 'video']).default('file').describe('Telegram payload kind. Use file for documents, HTML, text, PDFs, and other generic files. Never use artifact as kind.'),
+  artifactId: z.string().min(1).describe(TOOL_PROMPTS.sendArtifact.artifactId),
+  kind: z.enum(['file', 'photo', 'video']).default('file').describe(TOOL_PROMPTS.sendArtifact.kind),
   caption: z.string().max(1024).optional(),
   filename: z.string().min(1).max(120).optional(),
 });
 
 export const sendArtifactTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'send_artifact',
-  description: 'Queue an existing chat-local artifact to be sent to Telegram as a file, photo, or video. Use kind=file for documents, HTML, text, PDFs, and other generic files.',
+  description: TOOL_PROMPTS.sendArtifact.description,
   schema: argsSchema,
   execute: async (args, context) => {
     const meta = await readArtifactMeta(context.store, args.artifactId);

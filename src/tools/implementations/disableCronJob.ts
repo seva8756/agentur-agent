@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
 const argsSchema = z.object({ name: z.string().min(1).optional(), id: z.string().min(1).optional() });
 
 export const disableCronJobTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'disable_cron_job',
-  description: 'Disable cron job by name. Name can be the stable file name/id or the visible title.',
+  description: TOOL_PROMPTS.disableCronJob.description,
   schema: argsSchema,
   execute: async (args, context) => {
     const name = args.name ?? args.id ?? '';

@@ -1,17 +1,18 @@
 import { z } from 'zod';
 import { createBase64Artifact, createTextArtifact } from '../../memory/artifactStore';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
 const argsSchema = z.object({
-  filename: z.string().min(1).max(120).describe('Filename to show to the user, for example index.html'),
-  mimeType: z.string().min(1).max(120).describe('IANA media type, for example text/html or image/png'),
-  text: z.string().optional().describe('UTF-8 text content for text-like artifacts'),
-  base64: z.string().optional().describe('Base64 encoded binary content for non-text artifacts'),
+  filename: z.string().min(1).max(120).describe(TOOL_PROMPTS.createArtifact.filename),
+  mimeType: z.string().min(1).max(120).describe(TOOL_PROMPTS.createArtifact.mimeType),
+  text: z.string().optional().describe(TOOL_PROMPTS.createArtifact.text),
+  base64: z.string().optional().describe(TOOL_PROMPTS.createArtifact.base64),
 }).refine((value) => (value.text !== undefined) !== (value.base64 !== undefined), 'provide exactly one of text or base64');
 
 export const createArtifactTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'create_artifact',
-  description: 'Create a chat-local file artifact from UTF-8 text or base64 content. Returns metadata and an artifactId.',
+  description: TOOL_PROMPTS.createArtifact.description,
   schema: argsSchema,
   execute: async (args, context) => {
     const meta = args.text !== undefined

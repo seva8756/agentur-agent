@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { formatLogError, logger } from '../utils/logger';
 import { ToolRegistry } from '../tools/registry';
 import { toOpenAITool, ToolContext } from '../tools/types';
+import { buildNativeToolCallingNotice } from '../prompts/catalog';
 import { isRetryableLlmTransportError } from './errors';
 
 export async function runToolLoop(params: {
@@ -48,12 +49,7 @@ export async function runToolLoop(params: {
 function withNativeToolCallingNotice(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   const notice: ChatCompletionMessageParam = {
     role: 'system',
-    content: [
-      'Native tool calling is available for this turn.',
-      'When a tool is needed, use only the API-provided tool_calls/function-calling mechanism.',
-      'Do not write tool calls, function calls, tool arguments, internal action markup, XML-style tags, or JSON tool invocations in assistant text.',
-      'If a required tool cannot be called natively, say that the action cannot be completed rather than emitting a textual tool call.',
-    ].join(' '),
+    content: buildNativeToolCallingNotice(),
   };
   let lastUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {

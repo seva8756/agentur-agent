@@ -1,15 +1,16 @@
 import { z } from 'zod';
 import { readArtifactMeta, readArtifactText } from '../../memory/artifactStore';
+import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
 const argsSchema = z.object({
-  artifactId: z.string().min(1).describe('Artifact id returned by create_artifact or a skill result'),
-  mode: z.enum(['meta', 'text']).default('text').describe('Use meta for binary files or text to read text-like artifacts'),
+  artifactId: z.string().min(1).describe(TOOL_PROMPTS.readArtifact.artifactId),
+  mode: z.enum(['meta', 'text']).default('text').describe(TOOL_PROMPTS.readArtifact.mode),
 });
 
 export const readArtifactTool: AgentTool<z.output<typeof argsSchema>> = {
   name: 'read_artifact',
-  description: 'Read metadata or text content from a chat-local artifact. Binary artifacts support metadata only.',
+  description: TOOL_PROMPTS.readArtifact.description,
   schema: argsSchema,
   execute: async (args, context) => {
     if (args.mode === 'meta') {

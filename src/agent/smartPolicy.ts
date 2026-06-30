@@ -3,6 +3,7 @@ import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { readMood } from '../memory/moodDiary';
 import { DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS, formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
+import { buildSmartReplySystemPrompt, buildSmartReplyUserPrompt } from '../prompts/catalog';
 import { ChatMessage } from '../telegram/telegramTypes';
 import { logger } from '../utils/logger';
 
@@ -25,18 +26,9 @@ export async function decideSmartReply(
   const messages: ChatCompletionMessageParam[] = [
     {
       role: 'system',
-      content: [
-        'Decide whether a Telegram group assistant should proactively join the conversation.',
-        'Return strict JSON only: {"reply": boolean, "reason": string}.',
-        'Reply true only when the assistant can clearly help: direct unresolved question, request for planning, confusion, bug, summary needed, decision support, or useful reminder.',
-        'Reply false for casual banter, greetings, short acknowledgements, private jokes, emotional reactions, or when humans are already handling it.',
-        `Current mood: warmth=${mood.warmth.toFixed(2)}, tension=${mood.tension.toFixed(2)}, humor=${mood.humor.toFixed(2)}.`,
-        'If tension is high, be more conservative unless the assistant can reduce confusion, summarize, or de-escalate.',
-        'If warmth/humor are high and tension is low, a slightly more proactive helpful reply is acceptable, but only when useful.',
-        'Be conservative: silence is usually better.',
-      ].join(' '),
+      content: buildSmartReplySystemPrompt(mood),
     },
-    { role: 'user', content: `Recent chat:\n${recent}\n\nCurrent message:\n${message.text}` },
+    { role: 'user', content: buildSmartReplyUserPrompt(recent, message.text) },
   ];
 
   try {
