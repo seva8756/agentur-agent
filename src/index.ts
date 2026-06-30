@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const { bot, botUsername } = await createTelegramBot({ config, runtimeManager });
   sendToChat = async (chatId, store, result, threadId) => {
     await bot.api.sendChatAction(chatId, 'typing', threadOptions(threadId)).catch((error) => logger.debug('Could not send typing action', error));
-    await sendSkillResult(bot, store, chatId, result, threadId);
+    await sendSkillResult(bot, store, chatId, result, threadId, config.telegramSendMaxItems);
   };
 
   await runtimeManager.loadKnownRuntimes();

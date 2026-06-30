@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import type { Bot } from 'grammy';
 import { ChatRuntimeManager } from '../../src/agent/chatRuntime';
 import { loadConfig, AppConfig } from '../../src/config';
 import { buildChatContext, trimMessagesToBudget } from '../../src/agent/contextBuilder';
@@ -30,13 +31,13 @@ import { createCronJobTool } from '../../src/tools/implementations/createCronJob
 import { createSkillPackageDraftTool } from '../../src/tools/implementations/createSkillPackageDraft';
 import { createArtifactTool } from '../../src/tools/implementations/createArtifact';
 import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
-import { sendArtifactTool } from '../../src/tools/implementations/sendArtifact';
+import { createSendPayloadTool, sendPayloadTool } from '../../src/tools/implementations/sendPayload';
 import { runSkillToolTool } from '../../src/tools/implementations/runSkillTool';
 import { listSkillPackagesTool } from '../../src/tools/implementations/listSkillPackages';
 import { routeMessage } from '../../src/telegram/messageRouter';
 import { handleAgentCommand } from '../../src/telegram/commands';
 import { markdownToTelegramHtml } from '../../src/telegram/formatting';
-import { truncateForTelegram } from '../../src/telegram/send';
+import { sendSkillResult, truncateForTelegram } from '../../src/telegram/send';
 import { ChatMessage } from '../../src/telegram/telegramTypes';
 import { formatLocalTime } from '../../src/utils/time';
 
@@ -95,6 +96,23 @@ function packageSkill(partial: Partial<SkillPackage> & {
     whenToUse: partial.whenToUse ?? `Use when the user asks for ${partial.title}.`,
   });
 }
+
+describe('config', () => {
+  it('limits Telegram send payload items to the Telegram maximum', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiny-agent-config-'));
+    const config = testConfig(dir);
+    expect(config.telegramSendMaxItems).toBe(10);
+    expect(() => loadConfig({
+      TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHI',
+      TELEGRAM_ALLOWED_CHAT_ID: '-1001',
+      LLM_BASE_URL: 'https://api.openai.com/v1',
+      LLM_API_KEY: 'sk-test',
+      LLM_MODEL: 'test-model',
+      TELEGRAM_SEND_MAX_ITEMS: '11',
+      AGENT_DATA_DIR: dir,
+    })).toThrow(/TELEGRAM_SEND_MAX_ITEMS/);
+  });
+});
 
 const microSkillSchema = {
   parse(value: any): SkillPackage {
@@ -376,6 +394,41 @@ describe('telegram formatting', () => {
     const html = markdownToTelegramHtml('```ts\nif (x < y) return a & b;\n```');
     expect(html).toBe('<pre><code>if (x &lt; y) return a &amp; b;</code></pre>');
   });
+
+  it('sends compatible media payloads as one Telegram media group', async () => {
+    const { store } = await tempStore();
+    const sendMediaGroup = vi.fn(async (_chatId: string, media: unknown[]) => media.map((_item, index) => ({
+      message_id: index + 1,
+      date: 1,
+      chat: { id: -1001, type: 'supergroup' },
+    })));
+    const sendDocument = vi.fn();
+    const bot = {
+      api: {
+        sendMediaGroup,
+        sendDocument,
+        sendPhoto: vi.fn(),
+        sendVideo: vi.fn(),
+        sendMessage: vi.fn(),
+      },
+    } as unknown as Bot;
+
+    await sendSkillResult(bot, store, '-1001', {
+      ok: true,
+      reply: 'Файлы приложил.',
+      send: [
+        { kind: 'file', url: 'https://cdn.example.com/a.csv', filename: 'a.csv' },
+        { kind: 'file', url: 'https://cdn.example.com/b.csv', filename: 'b.csv' },
+      ],
+    }, undefined, 10);
+
+    expect(sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(sendDocument).not.toHaveBeenCalled();
+    const media = sendMediaGroup.mock.calls[0][1] as Array<{ type: string; caption?: string }>;
+    expect(media).toHaveLength(2);
+    expect(media[0].type).toBe('document');
+    expect(media[0].caption).toContain('Файлы приложил.');
+  });
 });
 
 describe('context trimming', () => {
@@ -436,6 +489,32 @@ describe('context trimming', () => {
     });
     expect(String(context[0]?.content)).toContain('@username');
     expect(String(context[2]?.content)).toContain('Сева (@seva): посмотри задачу');
+  });
+
+  it('includes recent attachment metadata in agent context', async () => {
+    const { store } = await tempStore();
+    await appendRecentMessage(store, {
+      id: 1,
+      chatId: '-1001',
+      text: 'Готово, приложил CSV.',
+      date: new Date().toISOString(),
+      isBot: true,
+      attachments: [{
+        kind: 'file',
+        artifactId: 'art_existing_csv',
+        filename: 'random_users.csv',
+      }],
+    });
+    const context = await buildChatContext(store, 'пришли тот же файл', {
+      maxChars: 1000,
+      recentLimit: 5,
+      factsMaxChars: 500,
+      timezone: 'Europe/Moscow',
+    });
+    const memory = String(context[2]?.content);
+    expect(memory).toContain('artifact=art_existing_csv');
+    expect(memory).toContain('filename=random_users.csv');
+    expect(memory).not.toContain('caption=');
   });
 
   it('limits large recent messages before adding them to context', async () => {
@@ -606,7 +685,7 @@ describe('context trimming', () => {
     expect(reply).toContain('лимита контекста');
   });
 
-  it('uses the model final reply as queued media caption in agent orchestration', async () => {
+  it('returns multiple queued media sends and uses the model final reply as the first caption', async () => {
     const { store, config, scheduler } = await tempStore();
     const result = await generateAgentResult({
       input: 'сделай аккаунт и пришли файл',
@@ -619,12 +698,22 @@ describe('context trimming', () => {
           options?.toolContext?.outbox?.push({
             ok: true,
             reply: 'Skill summary',
-            send: {
+            send: [{
               kind: 'file',
               url: 'https://cdn.example.com/users.csv',
               caption: 'Skill caption',
               filename: 'users.csv',
-            },
+            }],
+          });
+          options?.toolContext?.outbox?.push({
+            ok: true,
+            reply: 'Second skill summary',
+            send: [{
+              kind: 'file',
+              url: 'https://cdn.example.com/audit.csv',
+              caption: 'Audit caption',
+              filename: 'audit.csv',
+            }],
           });
           return 'Создал аккаунт и приложил CSV.';
         },
@@ -634,12 +723,17 @@ describe('context trimming', () => {
     });
 
     expect(result?.reply).toBe('Создал аккаунт и приложил CSV.');
-    expect(result?.send).toEqual({
+    expect(result?.send).toEqual([{
       kind: 'file',
       url: 'https://cdn.example.com/users.csv',
       caption: 'Создал аккаунт и приложил CSV.',
       filename: 'users.csv',
-    });
+    }, {
+      kind: 'file',
+      url: 'https://cdn.example.com/audit.csv',
+      caption: 'Audit caption',
+      filename: 'audit.csv',
+    }]);
   });
 
   it('includes enabled micro-skills for semantic tool selection', async () => {
@@ -702,7 +796,7 @@ describe('artifacts', () => {
     expect(read.truncated).toBe(false);
   });
 
-  it('lets agent tools create, read, and queue artifacts', async () => {
+  it('lets agent tools create, read, and queue artifact payloads', async () => {
     const { store, scheduler } = await tempStore();
     const context: ToolContext = { store, scheduler, timezone: 'Europe/Moscow', outbox: [] };
     const created = JSON.parse(await createArtifactTool.execute({
@@ -712,9 +806,28 @@ describe('artifacts', () => {
     }, context));
     const read = JSON.parse(await readArtifactTool.execute({ artifactId: created.artifact.id, mode: 'text' }, context));
     expect(read.text).toBe('hello');
-    const queued = JSON.parse(await sendArtifactTool.execute({ artifactId: created.artifact.id, kind: 'file' }, context));
-    expect(queued.send.source).toEqual({ type: 'artifact', artifactId: created.artifact.id });
+    const queued = JSON.parse(await sendPayloadTool.execute({
+      send: [{
+        kind: 'file',
+        source: { type: 'artifact', artifactId: created.artifact.id },
+      }],
+    }, context));
+    expect(queued.send[0].source).toEqual({ type: 'artifact', artifactId: created.artifact.id });
     expect(context.outbox?.[0]?.send).toEqual(queued.send);
+  });
+
+  it('enforces configured send_payload item limits before queueing', async () => {
+    const { store, scheduler } = await tempStore();
+    const context: ToolContext = { store, scheduler, timezone: 'Europe/Moscow', outbox: [] };
+    const tool = createSendPayloadTool(2);
+    const send = [
+      { kind: 'message' as const, text: 'one' },
+      { kind: 'message' as const, text: 'two' },
+      { kind: 'message' as const, text: 'three' },
+    ];
+    expect(() => tool.schema.parse({ send })).toThrow();
+    await tool.execute({ send: send.slice(0, 2) }, context);
+    await expect(tool.execute({ send: [send[2]] }, context)).rejects.toThrow(/2/);
   });
 });
 
@@ -897,7 +1010,7 @@ describe('micro-skills', () => {
     });
   });
 
-  it('returns media payload from micro-skill tool', async () => {
+  it('returns media payload from micro-skill tool without queueing it automatically', async () => {
     const { store } = await tempStore();
     await saveDraftSkill(store, microSkillSchema.parse({
       id: 'photo_tool',
@@ -924,10 +1037,10 @@ describe('micro-skills', () => {
       toolName: 'main',
       reply: 'Кот',
       data: null,
-      send: { kind: 'photo', url: 'https://cdn.example.com/cat.png', caption: 'Кот' },
+      send: [{ kind: 'photo', url: 'https://cdn.example.com/cat.png', caption: 'Кот' }],
       error: null,
     });
-    expect(context.outbox?.[0]?.send).toEqual({ kind: 'photo', url: 'https://cdn.example.com/cat.png', caption: 'Кот' });
+    expect(context.outbox).toEqual([]);
   });
 
   it('runs scripted skill in sandbox with scoped storage', async () => {
@@ -996,12 +1109,12 @@ describe('micro-skills', () => {
     });
     const result = await runSkill(store, skill, msg({ text: '/media' }));
     expect(result?.reply).toBe('Документ готов');
-    expect(result?.send).toEqual({
+    expect(result?.send).toEqual([{
       kind: 'file',
       url: 'https://cdn.example.com/report.pdf',
       caption: 'Отчёт',
       filename: 'report.pdf',
-    });
+    }]);
   });
 
   it('supports scripted artifact send results', async () => {
@@ -1031,16 +1144,16 @@ describe('micro-skills', () => {
       createdAt: new Date().toISOString(),
     });
     const result = await runSkill(store, skill, msg({ text: '/html' }));
-    const artifactId = result?.send?.kind !== 'message' && result?.send?.source?.type === 'artifact'
-      ? result.send.source.artifactId
+    const artifactId = result?.send?.[0]?.kind !== 'message' && result?.send?.[0]?.source?.type === 'artifact'
+      ? result.send[0].source.artifactId
       : '';
     expect(artifactId).toMatch(/^art_/);
     expect((await readArtifactText(store, artifactId)).text).toBe('<h1>Hi</h1>');
-    expect(result?.send).toEqual({
+    expect(result?.send).toEqual([{
       kind: 'file',
       source: { type: 'artifact', artifactId },
       caption: 'index.html',
-    });
+    }]);
   });
 
   it('rejects scripted media send results with non-public URLs', async () => {

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { TELEGRAM_SEND_MAX_ITEMS_LIMIT } from './telegram/sendLimits';
 import { validateTimeZone } from './utils/time';
 
 dotenv.config();
@@ -45,6 +46,7 @@ const envSchema = z.object({
   AGENT_MAX_TOOL_STEPS: z.coerce.number().int().positive().default(6),
   AGENT_IDENTITY_MAX_CHARS: z.coerce.number().int().positive().default(5000),
   TELEGRAM_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(5242880),
+  TELEGRAM_SEND_MAX_ITEMS: z.coerce.number().int().min(1).max(TELEGRAM_SEND_MAX_ITEMS_LIMIT).default(TELEGRAM_SEND_MAX_ITEMS_LIMIT),
   CONTEXT_MAX_CHARS: z.coerce.number().int().positive().default(14000),
   RECENT_MESSAGES_CONTEXT_LIMIT: z.coerce.number().int().positive().default(30),
   RECENT_MESSAGE_CONTEXT_MAX_CHARS: z.coerce.number().int().positive().default(500),
@@ -91,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     agentMaxToolSteps: v.AGENT_MAX_TOOL_STEPS,
     agentIdentityMaxChars: v.AGENT_IDENTITY_MAX_CHARS,
     telegramImageMaxBytes: v.TELEGRAM_IMAGE_MAX_BYTES,
+    telegramSendMaxItems: v.TELEGRAM_SEND_MAX_ITEMS,
     contextMaxChars: v.CONTEXT_MAX_CHARS,
     recentMessagesContextLimit: v.RECENT_MESSAGES_CONTEXT_LIMIT,
     recentMessageContextMaxChars: v.RECENT_MESSAGE_CONTEXT_MAX_CHARS,

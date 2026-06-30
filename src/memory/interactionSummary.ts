@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { FileStore } from './fileStore';
 import { analyzeMoodSignal, readMood, smoothMood, writeMood } from './moodDiary';
-import { clearRecentMessages, formatMessageAuthor, RecentMessage } from './recentMessages';
+import { clearRecentMessages, formatMessageAuthor, formatRecentMessageForContext, RecentMessage } from './recentMessages';
 
 export const interactionSummarySchema = z.object({
   id: z.string(),
@@ -59,11 +59,17 @@ function buildInteractionSummary(messages: RecentMessage[], mood: { warmth: numb
     .slice(-5)
     .map((m) => `${formatMessageAuthor(m)}: ${m.text}`)
     .join(' | ');
+  const attachmentMessages = messages
+    .filter((m) => m.attachments?.length)
+    .slice(-5)
+    .map((m) => formatRecentMessageForContext(m, 160))
+    .join(' | ');
   return [
     `Сообщений: ${messages.length}; участники: ${users || 'нет'}.`,
     `Темы/ключевые слова: ${topics}.`,
     `Настроение: warmth=${mood.warmth.toFixed(2)}, tension=${mood.tension.toFixed(2)}, humor=${mood.humor.toFixed(2)}.`,
     lastUserMessages ? `Последние обращения: ${lastUserMessages}` : '',
+    attachmentMessages ? `Вложения: ${attachmentMessages}` : '',
   ]
     .filter(Boolean)
     .join('\n');

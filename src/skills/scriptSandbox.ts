@@ -354,7 +354,7 @@ async function executeQuickJs(
 }
 
 function hasScriptResultOutput(value: SkillRunResult): boolean {
-  return Boolean(value.reply?.trim() || value.send || value.data !== undefined || value.error);
+  return Boolean(value.reply?.trim() || value.send?.length || value.data !== undefined || value.error);
 }
 
 class ScriptedSkillError extends Error {

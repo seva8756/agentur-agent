@@ -1,6 +1,15 @@
 import { z } from 'zod';
 import { FileStore } from './fileStore';
 
+export const recentAttachmentSchema = z.object({
+  kind: z.enum(['file', 'photo', 'video']),
+  artifactId: z.string().optional(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  mimeType: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+});
+
 export const recentMessageSchema = z.object({
   id: z.number(),
   chatId: z.string(),
@@ -11,7 +20,10 @@ export const recentMessageSchema = z.object({
   text: z.string(),
   date: z.string(),
   isBot: z.boolean().default(false),
+  attachments: z.array(recentAttachmentSchema).optional(),
 });
+
+export type RecentAttachment = z.output<typeof recentAttachmentSchema>;
 
 export type RecentMessage = {
   id: number;
@@ -23,6 +35,7 @@ export type RecentMessage = {
   text: string;
   date: string;
   isBot: boolean;
+  attachments?: RecentAttachment[];
 };
 
 export const DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS = 500;
@@ -47,7 +60,7 @@ export async function trimRecentMessages(
   const archived = messages.slice(0, overflowCount);
   const kept = messages.slice(overflowCount);
   const existing = await store.readText('', 'chat', 'summary.md');
-  const archiveText = archived.map((m) => `${formatMessageAuthor(m)}: ${m.text}`).join('\n');
+  const archiveText = archived.map((m) => formatRecentMessageForContext(m)).join('\n');
   const updated = `${existing.trim()}\n\nАрхив контекста ${new Date().toISOString()}:\n${archiveText}`
     .trim()
     .slice(-summaryMaxChars);
@@ -68,7 +81,10 @@ export function formatRecentMessageForContext(
   maxTextChars = DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS,
 ): string {
   const thread = message.threadId ? `[thread=${message.threadId}] ` : '';
-  return `${thread}${formatMessageAuthor(message)}: ${limitRecentText(message.text, maxTextChars)}`;
+  const text = limitRecentText(message.text, maxTextChars);
+  const attachments = formatAttachmentsForContext(message.attachments);
+  const body = [text, attachments].filter(Boolean).join('\n');
+  return `${thread}${formatMessageAuthor(message)}: ${body}`;
 }
 
 export function formatMessageAuthor(message: Pick<RecentMessage, 'displayName' | 'username' | 'userId'>): string {
@@ -80,4 +96,19 @@ export function formatMessageAuthor(message: Pick<RecentMessage, 'displayName' |
 function limitRecentText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(0, maxChars - 24)).trimEnd()}... [truncated]`;
+}
+
+function formatAttachmentsForContext(attachments: RecentAttachment[] | undefined): string {
+  if (!attachments?.length) return '';
+  return attachments.map((attachment) => {
+    const parts = [
+      attachment.kind,
+      attachment.filename ? `filename=${attachment.filename}` : undefined,
+      attachment.artifactId ? `artifact=${attachment.artifactId}` : undefined,
+      attachment.url ? `url=${attachment.url}` : undefined,
+      attachment.mimeType ? `mime=${attachment.mimeType}` : undefined,
+      attachment.sizeBytes !== undefined ? `size=${attachment.sizeBytes}` : undefined,
+    ].filter(Boolean);
+    return `[attachment: ${parts.join(' ')}]`;
+  }).join('\n');
 }

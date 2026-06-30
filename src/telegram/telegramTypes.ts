@@ -12,8 +12,16 @@ export type ChatMessage = {
     mimeType: string;
     sizeBytes: number;
   };
+  attachments?: ChatMessageAttachment[];
   date: Date;
   replyToBot?: boolean;
   quotedMessage?: { text: string; authorName?: string };
   entities?: Array<{ type: string; offset: number; length: number }>;
+};
+
+export type ChatMessageAttachment = {
+  kind: 'file' | 'photo' | 'video';
+  filename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
 };

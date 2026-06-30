@@ -1,0 +1,1 @@
+export const TELEGRAM_SEND_MAX_ITEMS_LIMIT = 10;

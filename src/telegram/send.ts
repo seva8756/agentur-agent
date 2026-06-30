@@ -1,8 +1,8 @@
 import { Bot, Context, InputFile } from 'grammy';
-import type { Message, ParseMode } from 'grammy/types';
+import type { InputMediaDocument, InputMediaPhoto, InputMediaVideo, Message, ParseMode } from 'grammy/types';
 import { artifactContentPath, readArtifactMeta } from '../memory/artifactStore';
 import { FileStore } from '../memory/fileStore';
-import { SkillRunResult, skillResultText } from '../skills/result';
+import { SKILL_SEND_MAX_ITEMS, SkillRunResult, SkillSend, skillResultText } from '../skills/result';
 import { logger } from '../utils/logger';
 import { markdownToTelegramHtml } from './formatting';
 
@@ -55,17 +55,29 @@ export async function replySkillResult(
   result: SkillRunResult,
   replyToMessageId?: number,
   threadId?: number,
+  maxSendItems = SKILL_SEND_MAX_ITEMS,
 ): Promise<Message> {
-  if (result.send) {
+  if (result.send?.length) {
     try {
-      return await sendTelegramPayload({
+      return await sendTelegramPayloads({
         store,
-        send: (method, url, options) => ctx.api[method](ctx.chat!.id, url, {
+        sendMedia: (method, url, options) => ctx.api[method](ctx.chat!.id, url, {
+          ...options,
+          reply_to_message_id: replyToMessageId,
+          message_thread_id: threadId,
+        } as never),
+        sendMediaGroup: (media, options) => ctx.api.sendMediaGroup(ctx.chat!.id, media, {
+          ...options,
+          reply_to_message_id: replyToMessageId,
+          message_thread_id: threadId,
+        } as never),
+        sendText: (text, options) => ctx.reply(text, {
           ...options,
           reply_to_message_id: replyToMessageId,
           message_thread_id: threadId,
         } as never),
         result,
+        maxSendItems,
       });
     } catch (error) {
       logger.warn('Telegram rejected skill media reply, falling back to text', error);
@@ -75,16 +87,32 @@ export async function replySkillResult(
   return replyMarkdown(ctx, skillResultText(result) ?? '', replyToMessageId, threadId);
 }
 
-export async function sendSkillResult(bot: Bot, store: FileStore, chatId: string, result: SkillRunResult, threadId?: number | null): Promise<Message> {
-  if (result.send) {
+export async function sendSkillResult(
+  bot: Bot,
+  store: FileStore,
+  chatId: string,
+  result: SkillRunResult,
+  threadId?: number | null,
+  maxSendItems = SKILL_SEND_MAX_ITEMS,
+): Promise<Message> {
+  if (result.send?.length) {
     try {
-      return await sendTelegramPayload({
+      return await sendTelegramPayloads({
         store,
-        send: (method, url, options) => bot.api[method](chatId, url, {
+        sendMedia: (method, url, options) => bot.api[method](chatId, url, {
+          ...options,
+          message_thread_id: threadId ?? undefined,
+        } as never),
+        sendMediaGroup: (media, options) => bot.api.sendMediaGroup(chatId, media, {
+          ...options,
+          message_thread_id: threadId ?? undefined,
+        } as never),
+        sendText: (text, options) => bot.api.sendMessage(chatId, text, {
           ...options,
           message_thread_id: threadId ?? undefined,
         } as never),
         result,
+        maxSendItems,
       });
     } catch (error) {
       logger.warn('Telegram rejected skill media message, falling back to text', error);
@@ -96,45 +124,151 @@ export async function sendSkillResult(bot: Bot, store: FileStore, chatId: string
 
 function fallbackSkillText(result: SkillRunResult): string {
   const text = skillResultText(result);
-  const sourceText = result.send && result.send.kind !== 'message'
-    ? result.send.url
-      ?? (result.send.source?.type === 'url' ? result.send.source.url : undefined)
-      ?? (result.send.source?.type === 'artifact' ? result.send.source.artifactId : undefined)
-    : undefined;
-  return [text, sourceText].filter(Boolean).join('\n') || 'Готово.';
+  const sourceTexts = (result.send ?? []).flatMap((send) => {
+    if (send.kind === 'message') return [];
+    return send.url
+      ?? (send.source?.type === 'url' ? send.source.url : undefined)
+      ?? (send.source?.type === 'artifact' ? send.source.artifactId : undefined)
+      ?? [];
+  });
+  return [text, ...sourceTexts].filter(Boolean).join('\n') || 'Готово.';
 }
 
-async function sendTelegramPayload(params: {
+type MediaGroupInput = InputMediaPhoto | InputMediaDocument | InputMediaVideo;
+
+type SendTelegramPayloadParams = {
   store: FileStore;
   result: SkillRunResult;
-  send: (
+  maxSendItems: number;
+  sendMedia: (
     method: 'sendPhoto' | 'sendDocument' | 'sendVideo',
     input: string | InputFile,
     options: Record<string, unknown>,
   ) => Promise<Message>;
-}): Promise<Message> {
-  const { send } = params.result;
-  if (!send) throw new Error('Missing send payload');
-  if (send.kind === 'message') {
-    throw new Error('Message payload should be sent as text');
+  sendMediaGroup: (
+    media: MediaGroupInput[],
+    options: Record<string, unknown>,
+  ) => Promise<Message[]>;
+  sendText: (text: string, options: Record<string, unknown>) => Promise<Message>;
+};
+
+async function sendTelegramPayloads(params: SendTelegramPayloadParams): Promise<Message> {
+  assertSendItemLimit(params.result.send, params.maxSendItems);
+  const sends = params.result.send;
+  if (!sends?.length) throw new Error('Missing send payload');
+  let last: Message | undefined;
+  for (let index = 0; index < sends.length;) {
+    const send = sends[index];
+    if (send.kind === 'message') {
+      last = await sendTextPayload(params, send, index);
+      index += 1;
+    } else {
+      const group = collectCompatibleMediaGroup(sends, index);
+      if (group.length >= 2) {
+        last = await sendMediaGroupPayload(params, group, index);
+      } else {
+        last = await sendMediaPayload(params, send, index);
+      }
+      index += group.length;
+    }
   }
-  const caption = send.caption ?? params.result.reply ?? undefined;
+  if (!last) throw new Error('Missing sent Telegram message');
+  return last;
+}
+
+function assertSendItemLimit(send: SkillRunResult['send'], maxSendItems: number): void {
+  if (!send?.length) return;
+  const safeMaxSendItems = Math.max(1, Math.min(SKILL_SEND_MAX_ITEMS, Math.floor(maxSendItems)));
+  if (send.length > safeMaxSendItems) {
+    throw new Error(`Telegram send payload item limit exceeded: ${send.length}/${safeMaxSendItems}`);
+  }
+}
+
+async function sendTextPayload(
+  params: SendTelegramPayloadParams,
+  send: Extract<SkillSend, { kind: 'message' }>,
+  index: number,
+): Promise<Message> {
+  const text = send.text ?? send.caption ?? (index === 0 ? params.result.reply : undefined) ?? 'Готово.';
+  const safeText = truncateForTelegram(text, TELEGRAM_MESSAGE_MAX_CHARS);
+  return callTelegramWithRetry(() => params.sendText(markdownToTelegramHtml(safeText), {
+    parse_mode: 'HTML' as ParseMode,
+  }));
+}
+
+async function sendMediaPayload(
+  params: SendTelegramPayloadParams,
+  send: MediaSend,
+  index: number,
+): Promise<Message> {
+  const caption = send.caption ?? (index === 0 ? params.result.reply : undefined) ?? undefined;
   const safeCaption = caption ? truncateForTelegram(caption, TELEGRAM_CAPTION_MAX_CHARS) : undefined;
   const options = {
     caption: safeCaption ? markdownToTelegramHtml(safeCaption) : undefined,
     parse_mode: safeCaption ? 'HTML' as ParseMode : undefined,
   };
   const input = await resolveTelegramInput(params.store, send);
-  if (send.kind === 'photo') return callTelegramWithRetry(() => params.send('sendPhoto', input, options));
-  if (send.kind === 'file') return callTelegramWithRetry(() => params.send('sendDocument', input, options));
-  return callTelegramWithRetry(() => params.send('sendVideo', input, options));
+  if (send.kind === 'photo') return callTelegramWithRetry(() => params.sendMedia('sendPhoto', input, options));
+  if (send.kind === 'file') return callTelegramWithRetry(() => params.sendMedia('sendDocument', input, options));
+  return callTelegramWithRetry(() => params.sendMedia('sendVideo', input, options));
+}
+
+type MediaSend = Extract<SkillSend, { kind: 'photo' | 'file' | 'video' }>;
+
+async function sendMediaGroupPayload(
+  params: SendTelegramPayloadParams,
+  sends: MediaSend[],
+  startIndex: number,
+): Promise<Message> {
+  const media: MediaGroupInput[] = [];
+  for (let offset = 0; offset < sends.length; offset += 1) {
+    media.push(await buildMediaGroupInput(params, sends[offset], startIndex + offset));
+  }
+  const messages = await callTelegramWithRetry(() => params.sendMediaGroup(media, {}));
+  const last = messages[messages.length - 1];
+  if (!last) throw new Error('Telegram media group returned no messages');
+  return last;
+}
+
+async function buildMediaGroupInput(
+  params: SendTelegramPayloadParams,
+  send: MediaSend,
+  index: number,
+): Promise<MediaGroupInput> {
+  const caption = send.caption ?? (index === 0 ? params.result.reply : undefined) ?? undefined;
+  const safeCaption = caption ? truncateForTelegram(caption, TELEGRAM_CAPTION_MAX_CHARS) : undefined;
+  const captionFields: { caption?: string; parse_mode?: ParseMode } = {};
+  if (safeCaption) {
+    captionFields.caption = markdownToTelegramHtml(safeCaption);
+    captionFields.parse_mode = 'HTML';
+  }
+  const input = await resolveTelegramInput(params.store, send);
+  if (send.kind === 'photo') return { type: 'photo', media: input, ...captionFields };
+  if (send.kind === 'file') return { type: 'document', media: input, ...captionFields };
+  return { type: 'video', media: input, ...captionFields };
+}
+
+function collectCompatibleMediaGroup(sends: SkillSend[], startIndex: number): MediaSend[] {
+  const first = sends[startIndex];
+  if (!first || first.kind === 'message') return [];
+  const key = mediaGroupCompatibilityKey(first);
+  const group: MediaSend[] = [];
+  for (let index = startIndex; index < sends.length; index += 1) {
+    const candidate = sends[index];
+    if (candidate.kind === 'message' || mediaGroupCompatibilityKey(candidate) !== key) break;
+    group.push(candidate);
+  }
+  return group;
+}
+
+function mediaGroupCompatibilityKey(send: MediaSend): 'document' | 'visual' {
+  return send.kind === 'file' ? 'document' : 'visual';
 }
 
 async function resolveTelegramInput(
   store: FileStore,
-  send: Exclude<SkillRunResult['send'], undefined>,
+  send: MediaSend,
 ): Promise<string | InputFile> {
-  if (send.kind === 'message') throw new Error('Message payload should be sent as text');
   if (send.source?.type === 'url') return send.source.url;
   if (send.url) return send.url;
   if (send.source?.type === 'artifact') {

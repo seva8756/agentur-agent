@@ -36,8 +36,8 @@ export const TOOL_PROMPTS = {
       'The skill runtime is always quickjs. The plugin tool signature is toolName(ctx, args). Use ctx.api.storage, ctx.api.lists, ctx.api.memory, ctx.api.http, ctx.api.artifacts, ctx.api.mcp, ctx.api.secrets, ctx.api.log, ctx.api.sleep.',
       'SDK contract: export default {tools:{async name(ctx,args){...}}}; SDK is only ctx.api, never a third api arg; HTTP returns {ok,status,text,json,url}; use ctx.api.http.get/post/put/patch/delete/request; secrets/storage are sync, http/lists/memory/sleep are async.',
       'MCP SDK: ctx.api.mcp.listServers(), listTools(serverId), callTool(serverId, toolName, args), readResource(serverId, uri). Use only already connected MCP servers/tools; never connect/spawn/register MCP servers in plugin.js.',
-      'Result contract: return {ok:true, reply?: string|null, data?: any, send?: media, error?: {code,message}}; use reply:null when done silently.',
-      'Artifact/file contract: create files with ctx.api.artifacts.createText({filename,mimeType,text}) or createBase64({filename,mimeType,base64}); send them with send:{kind:"file", source:{type:"artifact", artifactId: artifact.id}, caption?, filename?}. For images use kind:"photo"; for videos use kind:"video". Never use kind:"artifact".',
+      'Result contract: return {ok:true, reply?: string|null, data?: any, send?: media[], error?: {code,message}}; send is always an array and may contain one item; use reply:null when done silently.',
+      'Artifact/file contract: create files with ctx.api.artifacts.createText({filename,mimeType,text}) or createBase64({filename,mimeType,base64}); return deliverable files as send:[{kind:"file", source:{type:"artifact", artifactId: artifact.id}, caption?, filename?}]. For images use kind:"photo"; for videos use kind:"video". Never use kind:"artifact".',
       'Tiny example: export default {tools:{async check(ctx,args){const key=ctx.api.secrets.get("KEY"); const res=await ctx.api.http.get("https://example.com/api",{headers:{Authorization:"Bearer "+key}}); const value=res.json&&res.json.value!==undefined?res.json.value:res.text; return {ok:true, reply:String(value)}}}};',
       'No Node.js APIs, no fs/process/require/import/fetch/eval/Function.',
       'Default to triggers: [] so natural-language requests are selected semantically through whenToUse. A skill does not need a Telegram command to be usable.',
@@ -87,7 +87,7 @@ export const TOOL_PROMPTS = {
   },
   runSkillTool: {
     description:
-      'Run a tool exposed by an enabled skill. Use this when user intent matches a skill. Returns JSON with ok/reply/data/send/error; data can be used in later tool calls.',
+      'Run a tool exposed by an enabled skill. Use this when user intent matches a skill. Returns JSON with ok/reply/data/send/error; send is a suggested payload array and is not delivered unless you call send_payload.',
     skillId: 'Enabled skill id or visible title',
     toolName: 'Tool name exposed by the skill',
     args: 'Arguments for the skill tool',
@@ -96,10 +96,9 @@ export const TOOL_PROMPTS = {
   saveDecision: {
     description: 'Save a decision agreed in chat.',
   },
-  sendArtifact: {
-    description: 'Queue an existing chat-local artifact to be sent to Telegram as a file, photo, or video. Use kind=file for documents, HTML, text, PDFs, and other generic files.',
-    artifactId: 'Artifact id to send',
-    kind: 'Telegram payload kind. Use file for documents, HTML, text, PDFs, and other generic files. Never use artifact as kind.',
+  sendPayload: {
+    description: 'Queue one or more message/media/file payloads to be sent to Telegram. Use this to deliver send payloads returned by skills or to send artifacts/URLs explicitly.',
+    send: 'Array of payloads to send. A single-item array is normal. Use kind=file/photo/video/message; artifact is only a source type.',
   },
 } as const;
 
@@ -159,10 +158,13 @@ export function buildArtifactToolsPrompt(): string {
   return [
     'Artifact tools create and read chat-local files.',
     'Use create_artifact when the user asks you to produce a file instead of pasting long content.',
+    'If the request can be satisfied by an existing visible artifactId, reuse it via send_payload instead of creating or regenerating content.',
+    'Create/regenerate only when the requested content must change or no suitable artifactId is visible.',
     'Use read_artifact before modifying or explaining an existing artifact unless its content is already visible.',
-    'Use send_artifact to deliver an existing artifact to Telegram.',
-    'When returning a send payload for an artifact, use send.kind="file" for generic files, send.kind="photo" for images, or send.kind="video" for videos.',
-    'Never use send.kind="artifact"; artifact is only a source type: source={type:"artifact", artifactId:"art_..."}.',
+    'Use send_payload to deliver artifacts, URLs, photos, videos, files, or message payloads to Telegram.',
+    'When returning a send payload for artifacts, use send as an array; one item is normal and does not imply multiple files.',
+    'Inside each send item, use kind="file" for generic files, kind="photo" for images, or kind="video" for videos.',
+    'Never use kind="artifact" in a send item; artifact is only a source type: source={type:"artifact", artifactId:"art_..."}.',
     'Do not invent artifact IDs; use IDs returned by tools or visible in chat context.',
   ].join('\n');
 }
@@ -179,7 +181,7 @@ export function buildEnabledSkillsPrompt(skills: SkillPackage[], trustedSkills: 
     'If multiple skill tools are needed, call each relevant tool and compose the final answer from their structured results.',
     'A skill result with reply=null means the tool completed but has nothing to say; do not treat it as an error.',
     'A skill result with data is machine-readable context for later tool calls.',
-    'A skill result with send means the bot can send media/file directly; do not rewrite it as a plain Markdown link unless the tool reports an error.',
+    'A skill result with send is a suggested payload array, not an automatic delivery. If those attachments should be delivered, call send_payload with the desired send array.',
     ...trustedSkills.map(formatTrustedSkillForPrompt),
     ...skills.map(formatSkillForPrompt),
   ].join('\n');

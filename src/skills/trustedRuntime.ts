@@ -1,6 +1,6 @@
 import { AppConfig } from '../config';
 import { FileStore } from '../memory/fileStore';
-import { skillRunResultSchema } from './result';
+import { normalizeSkillRunResultInput, skillRunResultSchema } from './result';
 import { McpManager, TrustedSkill } from './trustedTypes';
 import { AgentTool, ToolContext } from '../tools/types';
 
@@ -16,18 +16,18 @@ export function trustedSkillToAgentTools(params: {
     execute: async (args, toolContext) => {
       const startedAt = Date.now();
       try {
-        const result = skillRunResultSchema.parse(await tool.execute(args, {
+        const result = skillRunResultSchema.parse(normalizeSkillRunResultInput(await tool.execute(args, {
           config: params.config,
           store: toolContext.store,
           currentMessage: toolContext.currentMessage,
           mcp: params.mcp,
-        }));
+        })));
         await auditTrustedSkillRun(toolContext.store, params.skill.manifest.id, toolName, 'completed', {
           durationMs: Date.now() - startedAt,
           args: summarizeArgs(args),
           hasReply: Boolean(result.reply?.trim()),
           hasData: result.data !== undefined,
-          hasSend: Boolean(result.send),
+          hasSend: Boolean(result.send?.length),
         });
         return JSON.stringify(result);
       } catch (error) {

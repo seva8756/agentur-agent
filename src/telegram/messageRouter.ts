@@ -153,6 +153,7 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
     text: message.text,
     date: message.date.toISOString(),
     isBot: false,
+    attachments: message.attachments,
   });
 
   const recent = await readRecentMessages(deps.store);

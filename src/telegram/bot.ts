@@ -4,6 +4,7 @@ import { ChatRuntimeManager } from '../agent/chatRuntime';
 import { decideReply } from '../agent/replyPolicy';
 import { isLlmContextLengthError } from '../llm/errors';
 import { appendRecentMessage, readRecentMessages } from '../memory/recentMessages';
+import type { RecentAttachment } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
 import { writeIdentity } from '../memory/identity';
 import { buildPhotoDownloadFailureUserPrompt } from '../prompts/catalog';
@@ -51,7 +52,12 @@ export async function createTelegramBot(params: {
   });
   bot.on('message:document', async (ctx) => {
     const caption = ctx.message.caption?.trim() ?? '';
-    if (!/^\/agentur(?:@\w+)?\s+identity\s+set\b/i.test(caption)) return;
+    if (!/^\/agentur(?:@\w+)?\s+identity\s+set\b/i.test(caption)) {
+      const message = toDocumentChatMessage(ctx, botUsername);
+      if (!message) return;
+      await handleIncomingChatMessage(ctx, message, botUsername, params);
+      return;
+    }
     const runtime = await params.runtimeManager.getRuntime(String(ctx.message.chat.id));
     if (!runtime) return;
     await ctx.api.sendChatAction(ctx.message.chat.id, 'typing', threadOptions(ctx.message.message_thread_id)).catch((error) =>
@@ -130,7 +136,7 @@ async function handleIncomingChatMessage(
     stopTyping();
   }
   if (!reply || !ctx.message) return;
-  const sent = await replySkillResult(ctx, runtime.store, reply, ctx.message.message_id, message.threadId);
+  const sent = await replySkillResult(ctx, runtime.store, reply, ctx.message.message_id, message.threadId, params.config.telegramSendMaxItems);
   await appendRecentMessage(runtime.store, {
     id: sent.message_id,
     chatId: String(sent.chat.id),
@@ -138,6 +144,7 @@ async function handleIncomingChatMessage(
     text: messageTextForMemory(reply),
     date: new Date((sent.date ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
     isBot: true,
+    attachments: skillResultAttachmentsForMemory(reply),
   });
   const recent = await readRecentMessages(runtime.store);
   if (!params.runtimeManager.isFullCaptureChat(message.chatId) && recent.length >= params.config.interactionSummaryEveryMessages) {
@@ -148,11 +155,26 @@ async function handleIncomingChatMessage(
 function messageTextForMemory(result: Awaited<ReturnType<typeof routeMessage>>): string {
   if (!result) return '';
   if (result.reply?.trim()) return result.reply.trim();
-  if (!result.send) return '';
-  if (result.send.kind === 'message') return result.send.text ?? result.send.caption ?? '';
-  const artifactId = result.send.source?.type === 'artifact' ? result.send.source.artifactId : undefined;
-  const url = result.send.url ?? (result.send.source?.type === 'url' ? result.send.source.url : undefined);
-  return [result.send.caption, url, artifactId].filter(Boolean).join('\n');
+  if (!result.send?.length) return '';
+  return result.send.map((send) => {
+    if (send.kind === 'message') return send.text ?? send.caption ?? '';
+    return send.caption ?? '';
+  }).filter(Boolean).join('\n');
+}
+
+function skillResultAttachmentsForMemory(result: Awaited<ReturnType<typeof routeMessage>>): RecentAttachment[] | undefined {
+  const attachments = (result?.send ?? []).flatMap((send): RecentAttachment[] => {
+    if (send.kind === 'message') return [];
+    const artifactId = send.source?.type === 'artifact' ? send.source.artifactId : undefined;
+    const url = send.url ?? (send.source?.type === 'url' ? send.source.url : undefined);
+    return [{
+      kind: send.kind,
+      artifactId,
+      url,
+      filename: send.filename,
+    }];
+  });
+  return attachments.length ? attachments : undefined;
 }
 
 function isIdentityDocument(fileName: string | undefined, mimeType: string | undefined): boolean {
@@ -286,6 +308,40 @@ async function toPhotoChatMessage(
     displayName: [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username,
     text: caption ? `[изображение] ${caption}` : '[изображение]',
     image,
+    attachments: [{
+      kind: 'photo',
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+    }],
+    date: new Date(message.date * 1000),
+    replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
+    entities: message.caption_entities,
+  };
+}
+
+function toDocumentChatMessage(ctx: Context, botUsername: string): ChatMessage | null {
+  const message = ctx.message;
+  if (!message || !('document' in message) || !message.document) return null;
+  const from = message.from;
+  const replyFrom = message.reply_to_message?.from;
+  const caption = message.caption?.trim();
+  const filename = message.document.file_name;
+  const label = filename ? `[файл: ${filename}]` : '[файл]';
+  return {
+    messageId: message.message_id,
+    chatId: String(message.chat.id),
+    threadId: message.message_thread_id,
+    chatType: message.chat.type,
+    fromId: from ? String(from.id) : undefined,
+    username: from?.username,
+    displayName: [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username,
+    text: caption ? `${label} ${caption}` : label,
+    attachments: [{
+      kind: 'file',
+      filename,
+      mimeType: message.document.mime_type,
+      sizeBytes: message.document.file_size,
+    }],
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
     entities: message.caption_entities,
@@ -311,6 +367,9 @@ function toPhotoFallbackChatMessage(
     username: from?.username,
     displayName: [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username,
     text: buildPhotoDownloadFailureUserPrompt(caption, reason),
+    attachments: [{
+      kind: 'photo',
+    }],
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
     entities: message.caption_entities,

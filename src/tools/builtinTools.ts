@@ -13,7 +13,7 @@ import { disableMicroSkillTool } from './implementations/disableMicroSkill';
 import { enableMicroSkillTool } from './implementations/enableMicroSkill';
 import { runSkillToolTool } from './implementations/runSkillTool';
 import { readArtifactTool } from './implementations/readArtifact';
-import { sendArtifactTool } from './implementations/sendArtifact';
+import { createSendPayloadTool } from './implementations/sendPayload';
 import { listCronJobsTool } from './implementations/listCronJobs';
 import { listSkillPackagesTool } from './implementations/listSkillPackages';
 import { rememberFactTool } from './implementations/rememberFact';
@@ -27,7 +27,7 @@ export function createBuiltinToolRegistry(config?: AppConfig, trustedSkills: Tru
     saveDecisionTool,
     createArtifactTool,
     readArtifactTool,
-    sendArtifactTool,
+    createSendPayloadTool(config?.telegramSendMaxItems),
     createSkillPackageDraftTool,
     listSkillPackagesTool,
     runSkillToolTool,

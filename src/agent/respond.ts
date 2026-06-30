@@ -60,11 +60,13 @@ export async function generateAgentResult(params: {
   const messages = attachImageToLastUserMessage(trimMessagesToBudget(baseMessages, params.config.contextMaxChars), params.image?.dataUrl);
   const text = await chatWithFallbacks({ ...params, toolContext }, messages);
   const modelReply = text.trim() ? limitOutput(text, params.config.agentMaxReplyChars) : '';
-  const queued = outbox.at(-1);
-  if (queued?.send) {
+  const queuedSend = outbox.flatMap((result) => result.send ?? []);
+  if (queuedSend.length) {
+    const queued = outbox.at(-1);
     const result = {
-      ...queued,
-      reply: modelReply || queued.reply,
+      ...(queued ?? { ok: true }),
+      send: queuedSend,
+      reply: modelReply || queued?.reply,
     };
     return withModelMediaCaption(result, modelReply);
   }
@@ -73,13 +75,15 @@ export async function generateAgentResult(params: {
 }
 
 function withModelMediaCaption(result: SkillRunResult, modelReply: string): SkillRunResult {
-  if (!modelReply || !result.send || result.send.kind === 'message') return result;
+  if (!modelReply || !result.send?.length) return result;
+  let captionApplied = false;
   return {
     ...result,
-    send: {
-      ...result.send,
-      caption: modelReply,
-    },
+    send: result.send.map((send) => {
+      if (captionApplied || send.kind === 'message') return send;
+      captionApplied = true;
+      return { ...send, caption: modelReply };
+    }),
   };
 }
 

@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { artifactFilenameSchema, artifactIdSchema } from '../memory/artifactStore';
+import { TELEGRAM_SEND_MAX_ITEMS_LIMIT } from '../telegram/sendLimits';
 
 export const SKILL_REPLY_MAX_CHARS = 8192;
 export const SKILL_MEDIA_CAPTION_MAX_CHARS = 1024;
 export const SKILL_MEDIA_FILENAME_MAX_CHARS = 120;
+export const SKILL_SEND_MAX_ITEMS = TELEGRAM_SEND_MAX_ITEMS_LIMIT;
 
 const safeHttpUrlSchema = z.string().url().refine(isSafePublicHttpUrl, 'URL must be public http/https');
 const captionSchema = z.string().max(SKILL_MEDIA_CAPTION_MAX_CHARS);
@@ -38,22 +40,32 @@ export const skillSendSchema = z.union([
   mediaSendSchema('video'),
 ]);
 
+const skillSendListSchema = z.array(skillSendSchema).min(1).max(SKILL_SEND_MAX_ITEMS);
+
 export const skillRunResultSchema = z.object({
   ok: z.boolean().default(true),
   reply: z.string().max(SKILL_REPLY_MAX_CHARS).nullable().optional(),
   data: z.unknown().optional(),
-  send: skillSendSchema.optional(),
+  send: skillSendListSchema.optional(),
   error: z.object({
     code: z.string().min(1),
     message: z.string().min(1),
   }).optional(),
 });
 
+export type SkillSend = z.output<typeof skillSendSchema>;
 export type SkillRunResult = z.output<typeof skillRunResultSchema>;
 
 export function normalizeSkillRunResultInput(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const record = { ...(value as Record<string, unknown>) };
+  if ('send' in record) {
+    if (record.send === null || record.send === undefined) {
+      delete record.send;
+    } else if (!Array.isArray(record.send)) {
+      record.send = [record.send];
+    }
+  }
   if ('error' in record && record.error !== undefined) {
     record.error = normalizeSkillError(record.error);
     if (record.ok === undefined) record.ok = false;
@@ -67,16 +79,21 @@ export function textSkillResult(reply: string | null | undefined): SkillRunResul
 }
 
 export function hasSkillOutput(result: SkillRunResult | null | undefined): result is SkillRunResult {
-  return Boolean(result && (result.reply?.trim() || result.send));
+  return Boolean(result && (result.reply?.trim() || result.send?.length));
 }
 
 export function skillResultText(result: SkillRunResult | null | undefined): string | null {
   if (!result) return null;
   const reply = result.reply?.trim();
   if (reply) return reply;
-  if (!result.send) return null;
-  if (result.send.kind === 'message') return result.send.text?.trim() || result.send.caption?.trim() || null;
-  return result.send.caption?.trim() || result.send.url || artifactText(result.send.source);
+  if (!result.send?.length) return null;
+  const parts = result.send.map(sendText).filter(Boolean);
+  return parts.length ? parts.join('\n') : null;
+}
+
+function sendText(send: SkillSend): string | null {
+  if (send.kind === 'message') return send.text?.trim() || send.caption?.trim() || null;
+  return send.caption?.trim() || send.url || artifactText(send.source);
 }
 
 function artifactText(source: z.output<typeof sendSourceSchema> | undefined): string | null {
