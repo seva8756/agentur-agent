@@ -9,11 +9,13 @@ import { createTelegramBot } from './telegram/bot';
 import { sendSkillResult } from './telegram/send';
 import { SkillRunResult } from './skills/result';
 import { FileStore } from './memory/fileStore';
+import { ConversationQueue } from './messaging/conversationQueue';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const llm = createLlmClient(config);
   const mcp = config.mcpEnabled ? new SdkMcpManager(config) : undefined;
+  const messageQueue = new ConversationQueue();
   const trustedSkills = await loadTrustedCatalogSkills(config);
   const trustedSkillsPrompt = trustedSkillPromptInfo(trustedSkills);
   const tools = createBuiltinToolRegistry(config, trustedSkills, mcp);
@@ -24,7 +26,7 @@ async function main(): Promise<void> {
     await sendToChat(chatId, store, result, threadId);
   }, trustedSkillsPrompt, mcp);
 
-  const { bot, botUsername } = await createTelegramBot({ config, runtimeManager });
+  const { bot, botUsername } = await createTelegramBot({ config, runtimeManager, messageQueue });
   sendToChat = async (chatId, store, result, threadId) => {
     await bot.api.sendChatAction(chatId, 'typing', threadOptions(threadId)).catch((error) => logger.debug('Could not send typing action', error));
     await sendSkillResult(bot, store, chatId, result, threadId, config.telegramSendMaxItems);

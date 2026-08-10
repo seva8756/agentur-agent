@@ -6,3 +6,5 @@ data/
 .DS_Store
 coverage/
 .idea/
+.*/
+graphify-out/

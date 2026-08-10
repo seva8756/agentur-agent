@@ -7,24 +7,35 @@ import { appendRecentMessage, readRecentMessages } from '../memory/recentMessage
 import type { RecentAttachment } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
 import { writeIdentity } from '../memory/identity';
+import { ConversationQueue } from '../messaging/conversationQueue';
 import { buildPhotoDownloadFailureUserPrompt } from '../prompts/catalog';
 import { logger } from '../utils/logger';
 import { routeMessage } from './messageRouter';
 import { replyMarkdown, replySkillResult } from './send';
 import { ChatMessage } from './telegramTypes';
 
-export async function createTelegramBot(params: {
+type TelegramBotParams = {
   config: AppConfig;
   runtimeManager: ChatRuntimeManager;
-}): Promise<{ bot: Bot; botUsername: string }> {
+  messageQueue: ConversationQueue;
+};
+
+export async function createTelegramBot(params: TelegramBotParams): Promise<{ bot: Bot; botUsername: string }> {
   const bot = new Bot(params.config.telegramBotToken);
   const me = await bot.api.getMe();
   const botUsername = params.config.telegramBotUsername ?? me.username;
 
+  bot.use((ctx, next) => {
+    if (!ctx.chat) return next();
+    void params.messageQueue.enqueue(String(ctx.chat.id), next).catch((error) => {
+      logger.error('Could not process Telegram update', error);
+    });
+  });
+
   bot.on('message:text', async (ctx) => {
     const message = toChatMessage(ctx, botUsername);
     if (!message) return;
-    
+
     // Если это команда установки секрета, ПЫТАЕМСЯ удалить сообщение пользователя в группе
     // (работает, если бот является администратором с правами на удаление сообщений)
     if (/^\/agentur(?:@\w+)?\s+secret\s+set\b/i.test(message.text.trim()) && ctx.chat?.type !== 'private') {
@@ -96,10 +107,7 @@ async function handleIncomingChatMessage(
   ctx: Context,
   message: ChatMessage,
   botUsername: string,
-  params: {
-    config: AppConfig;
-    runtimeManager: ChatRuntimeManager;
-  },
+  params: TelegramBotParams,
 ): Promise<void> {
   const runtime = await params.runtimeManager.getRuntime(message.chatId);
   if (!runtime) return;
