@@ -2,7 +2,7 @@ import { buildContextPolicy } from './policy';
 import { conservativeTokenEstimator, TokenEstimator } from './estimator';
 import type { ContextAllocation, ContextBudgetConfig, ContextStageKind, TextStage } from './types';
 
-const STAGE_KINDS: ContextStageKind[] = ['system', 'time', 'skills', 'user', 'memory', 'toolObservation'];
+const STAGE_KINDS: ContextStageKind[] = ['system', 'identity', 'time', 'skills', 'user', 'memory', 'toolObservation'];
 
 export function allocateContextStages(
   stages: TextStage[],
@@ -22,6 +22,8 @@ export function allocateContextStages(
   let softRemaining = softBudgetTokens;
   takes.system = takeBase(raw.system, policy.stages.system.maxTokens, softRemaining);
   softRemaining -= takes.system;
+  takes.identity = takeBase(raw.identity, policy.stages.identity.maxTokens, softRemaining);
+  softRemaining -= takes.identity;
   takes.time = takeBase(raw.time, policy.stages.time.maxTokens, softRemaining);
   softRemaining -= takes.time;
   takes.skills = takeBase(raw.skills, policy.stages.skills.maxTokens, softRemaining);

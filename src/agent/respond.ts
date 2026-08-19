@@ -211,7 +211,7 @@ function formatContextAllocationLog(allocation: ContextAllocation) {
     `free=${allocation.freeTokens}`,
     `userExtra=${allocation.userExtraTokens}`,
     `userOverflow=${allocation.userOverflowTokens}`,
-    `take=system:${allocation.takes.system},time:${allocation.takes.time},skills:${allocation.takes.skills},user:${allocation.takes.user},memory:${allocation.takes.memory},tool:${allocation.takes.toolObservation}`,
+    `take=system:${allocation.takes.system},identity:${allocation.takes.identity},time:${allocation.takes.time},skills:${allocation.takes.skills},user:${allocation.takes.user},memory:${allocation.takes.memory},tool:${allocation.takes.toolObservation}`,
   ].join(' ');
 }
 

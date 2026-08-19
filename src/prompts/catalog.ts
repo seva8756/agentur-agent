@@ -102,13 +102,12 @@ export const TOOL_PROMPTS = {
   },
 } as const;
 
-// Собирает основной system prompt агента: роль, стиль, identity, markdown, память и тональность чата.
-export function buildAgentSystemPrompt(mood: Mood, identity: string, profanityMode: ProfanityMode = 'normal'): string {
+// Собирает основной system prompt агента: роль, стиль, markdown и тональность чата.
+export function buildAgentSystemPrompt(mood: Mood, profanityMode: ProfanityMode = 'normal'): string {
   const moodGuidance = buildMoodGuidance(mood);
   const languageGuidance = buildLanguageGuidance(profanityMode);
   return [
     'Ты короткий ассистент одного Telegram-группового чата.',
-    identity ? `Стабильная identity агента для этого чата:\n${identity}\nЭта identity важнее mood diary и не переписывается под настроение чата.` : '',
     'Отвечай по делу, естественно, обычно 1-4 предложения.',
     'Не повторяй вопрос, не пиши вводные вроде "Конечно".',
     'Не упоминай, что ты LLM или AI. Не делай длинные списки без просьбы.',
@@ -119,6 +118,12 @@ export function buildAgentSystemPrompt(mood: Mood, identity: string, profanityMo
     languageGuidance,
     moodGuidance,
   ].filter(Boolean).join(' ');
+}
+
+export function buildAgentIdentityPrompt(identity: string): string {
+  return identity
+    ? `Стабильная identity агента для этого чата:\n${identity}\nЭта identity важнее прочих обстоятельств в чате, mood diary и не переписывается под настроение чата.`
+    : '';
 }
 
 // Сообщает модели текущее локальное время и таймзону для корректных ссылок на даты.

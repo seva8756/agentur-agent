@@ -12,7 +12,7 @@ import { decideReply } from '../../src/agent/replyPolicy';
 import { generateAgentReply, generateAgentResult } from '../../src/agent/respond';
 import { runToolLoop } from '../../src/llm/toolLoop';
 import { FileStore, initializeDataDir } from '../../src/memory/fileStore';
-import { readIdentity, writeIdentity } from '../../src/memory/identity';
+import { IdentityTooLongError, readIdentity, writeIdentity } from '../../src/memory/identity';
 import { readChatSettings, setReplyMode } from '../../src/memory/chatSettings';
 import { smoothMood, defaultMood, writeMood } from '../../src/memory/moodDiary';
 import { appendRecentMessage } from '../../src/memory/recentMessages';
@@ -976,14 +976,16 @@ describe('chat identity', () => {
       replyMaxTokens: 900,
       timezone: 'Europe/Moscow',
     });
-    expect(String(context.messages[0]?.content)).toContain('дворецкий');
-    expect(String(context.messages[0]?.content)).toContain('не переписывается под настроение');
+    const identityMessage = context.messages.find((message) => String(message.content).includes('дворецкий'));
+    expect(identityMessage?.role).toBe('system');
+    expect(String(identityMessage?.content)).toContain('не переписывается под настроение');
+    expect(context.allocation.takes.identity).toBeGreaterThan(0);
   });
 
-  it('trims identity to configured limit', async () => {
+  it('rejects identity over configured limit', async () => {
     const { store } = await tempStore();
-    await writeIdentity(store, 'abcdef', 3);
-    expect(await readIdentity(store)).toBe('abc');
+    await expect(writeIdentity(store, 'abcdef', 3)).rejects.toBeInstanceOf(IdentityTooLongError);
+    expect(await readIdentity(store)).toBe('');
   });
 });
 

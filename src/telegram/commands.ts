@@ -19,10 +19,10 @@ import {
   setCensorMode,
   setReplyMode,
 } from '../memory/chatSettings';
-import { readIdentity, resetIdentity, writeIdentity } from '../memory/identity';
+import { IDENTITY_MAX_CHARS, IdentityTooLongError, readIdentity, resetIdentity, writeIdentity } from '../memory/identity';
 import { readMood, resetMood } from '../memory/moodDiary';
 import { AgentScheduler } from '../scheduler/scheduler';
-import { loadDraftSkills, loadEnabledSkills, enableSkill, disableSkill, deleteSkill, resolveSkillName, findSkill } from '../skills/loader';
+import { loadDraftSkills, loadEnabledSkills, enableSkill, disableSkill, deleteSkill, findSkill } from '../skills/loader';
 import { skillSecrets } from '../skills/schema';
 
 export type CommandDeps = {
@@ -406,7 +406,13 @@ async function handleIdentityCommand(text: string, deps: CommandDeps): Promise<s
 
   if (action === 'set') {
     if (!body) return `Пришли текст после \`${COMMAND_PREFIX} identity set ...\` или приложи \`.txt/.md\` файл с caption \`${COMMAND_PREFIX} identity set\`.`;
-    const saved = await writeIdentity(deps.store, body, deps.config.agentIdentityMaxChars);
+    const saved = await writeIdentity(deps.store, body, IDENTITY_MAX_CHARS).catch((error) => {
+      if (error instanceof IdentityTooLongError) return error;
+      throw error;
+    });
+    if (saved instanceof IdentityTooLongError) {
+      return `Identity слишком длинная: ${saved.length} символов. Сократи до ${saved.maxChars} символов и попробуй снова.`;
+    }
     return `Identity сохранена для этого чата (${saved.length} символов).`;
   }
 

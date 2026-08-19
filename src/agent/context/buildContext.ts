@@ -9,6 +9,7 @@ import { readRecentMessages } from '../../memory/recentMessages';
 import { readSummary } from '../../memory/summary';
 import {
   buildAgentSystemPrompt,
+  buildAgentIdentityPrompt,
   buildArtifactToolsPrompt,
   buildCurrentTimePrompt,
   buildEnabledSkillsPrompt,
@@ -39,7 +40,8 @@ export async function buildChatContext(
     loadEnabledSkills(store),
   ]);
 
-  const system = buildAgentSystemPrompt(mood, identity, settings.profanityMode);
+  const system = buildAgentSystemPrompt(mood, settings.profanityMode);
+  const identityPrompt = buildAgentIdentityPrompt(identity);
   const time = buildCurrentTimePrompt(formatLocalTime(options.timezone), options.timezone);
   const skillsPrompt = [
     buildEnabledSkillsPrompt(skills, options.trustedSkills ?? []),
@@ -57,6 +59,7 @@ export async function buildChatContext(
   const rawMemory = packMemory(memorySource, options.contextBudgetTokens, estimator, policy);
   const stages: TextStage[] = [
     { kind: 'system', content: system },
+    { kind: 'identity', content: identityPrompt },
     { kind: 'time', content: time },
     { kind: 'skills', content: skillsPrompt },
     { kind: 'user', content: userInput },
@@ -66,6 +69,7 @@ export async function buildChatContext(
   const memory = packMemory(memorySource, allocation.takes.memory, estimator, policy);
   const messages: ChatCompletionMessageParam[] = [];
   pushSystem(messages, estimator.trimTextToTokens(system, allocation.takes.system));
+  pushSystem(messages, estimator.trimTextToTokens(identityPrompt, allocation.takes.identity));
   pushSystem(messages, estimator.trimTextToTokens(time, allocation.takes.time));
   if (memory.trim()) pushSystem(messages, buildLocalMemoryPrompt(memory));
   pushSystem(messages, estimator.trimTextToTokens(skillsPrompt, allocation.takes.skills));

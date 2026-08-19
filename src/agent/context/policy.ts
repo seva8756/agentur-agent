@@ -23,6 +23,7 @@ export function buildContextPolicy(config: ContextBudgetConfig): ContextPolicy {
     safetyTokens: Math.max(256, Math.ceil(config.contextWindowTokens * 0.02)),
     stages: {
       system: { maxTokens: Math.min(4000, soft) },
+      identity: { maxTokens: 5000 },
       time: { maxTokens: 150 },
       skills: { maxTokens: Math.min(5000, soft) },
       user: { maxTokens: 14000 },

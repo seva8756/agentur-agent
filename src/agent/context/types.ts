@@ -17,6 +17,7 @@ export type ContextBuildOptions = ContextBudgetConfig & {
 
 export type ContextStageKind =
   | 'system'
+  | 'identity'
   | 'time'
   | 'skills'
   | 'user'

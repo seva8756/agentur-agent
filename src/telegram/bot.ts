@@ -6,7 +6,7 @@ import { isLlmContextLengthError } from '../llm/errors';
 import { appendRecentMessage, readRecentMessages } from '../memory/recentMessages';
 import type { RecentAttachment } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
-import { writeIdentity } from '../memory/identity';
+import { IDENTITY_MAX_CHARS, IdentityTooLongError, writeIdentity } from '../memory/identity';
 import { ConversationQueue } from '../messaging/conversationQueue';
 import { buildPhotoDownloadFailureUserPrompt } from '../prompts/catalog';
 import { logger } from '../utils/logger';
@@ -80,8 +80,8 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
       await replyMarkdown(ctx, 'Identity можно задать только `.txt` или `.md` файлом.', ctx.message.message_id, ctx.message.message_thread_id);
       return;
     }
-    if (document.file_size && document.file_size > params.config.agentIdentityMaxChars * 4) {
-      await replyMarkdown(ctx, `Файл слишком большой. Лимит: ${params.config.agentIdentityMaxChars} символов.`, ctx.message.message_id, ctx.message.message_thread_id);
+    if (document.file_size && document.file_size > IDENTITY_MAX_CHARS * 4) {
+      await replyMarkdown(ctx, `Файл слишком большой. Лимит: ${IDENTITY_MAX_CHARS} символов.`, ctx.message.message_id, ctx.message.message_thread_id);
       return;
     }
 
@@ -89,12 +89,16 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
       const text = await downloadTelegramTextFile(
         params.config.telegramBotToken,
         document.file_id,
-        params.config.agentIdentityMaxChars * 4,
+        IDENTITY_MAX_CHARS * 4,
         bot,
       );
-      const saved = await writeIdentity(runtime.store, text, params.config.agentIdentityMaxChars);
+      const saved = await writeIdentity(runtime.store, text, IDENTITY_MAX_CHARS);
       await replyMarkdown(ctx, `Identity сохранена для этого чата (${saved.length} символов).`, ctx.message.message_id, ctx.message.message_thread_id);
     } catch (error) {
+      if (error instanceof IdentityTooLongError) {
+        await replyMarkdown(ctx, `Identity слишком длинная: ${error.length} символов. Сократи до ${error.maxChars} символов и попробуй снова.`, ctx.message.message_id, ctx.message.message_thread_id);
+        return;
+      }
       logger.warn('Could not save identity from Telegram document', error);
       await replyMarkdown(ctx, 'Не смог прочитать identity-файл. Проверь, что это UTF-8 `.txt` или `.md`.', ctx.message.message_id, ctx.message.message_thread_id);
     }
