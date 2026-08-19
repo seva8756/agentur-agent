@@ -14,6 +14,7 @@ export async function runToolLoop(params: {
   registry: ToolRegistry;
   context: ToolContext;
   maxSteps: number;
+  maxTokens?: number;
   completionRetries?: number;
 }): Promise<string> {
   const tools = params.registry.list().map(toOpenAITool);
@@ -22,6 +23,7 @@ export async function runToolLoop(params: {
     : [...params.messages];
   for (let step = 0; step < params.maxSteps; step += 1) {
     const response = await createCompletionWithRetry(params, messages, tools);
+    logCompletionUsage('LLM tool loop usage', step + 1, response.usage);
     const message = response.choices[0]?.message;
     if (!message) return '';
     if (!message.tool_calls?.length) return message.content ?? '';
@@ -44,6 +46,15 @@ export async function runToolLoop(params: {
     }
   }
   return 'Не смог завершить действие: достигнут лимит внутренних действий.';
+}
+
+function logCompletionUsage(
+  message: string,
+  step: number,
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+): void {
+  if (!usage) return;
+  logger.info(message, `step=${step} prompt=${usage.prompt_tokens ?? '?'} completion=${usage.completion_tokens ?? '?'} total=${usage.total_tokens ?? '?'}`);
 }
 
 function withNativeToolCallingNotice(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
@@ -70,6 +81,7 @@ async function createCompletionWithRetry(
   params: {
     client: OpenAI;
     model: string;
+    maxTokens?: number;
     completionRetries?: number;
   },
   messages: ChatCompletionMessageParam[],
@@ -84,6 +96,7 @@ async function createCompletionWithRetry(
         messages,
         tools,
         tool_choice: 'auto',
+        max_tokens: params.maxTokens,
       });
     } catch (error) {
       lastError = error;

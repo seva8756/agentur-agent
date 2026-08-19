@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { Bot } from 'grammy';
 import { ChatRuntimeManager } from '../../src/agent/chatRuntime';
 import { loadConfig, AppConfig } from '../../src/config';
-import { buildChatContext, trimMessagesToBudget } from '../../src/agent/contextBuilder';
+import { allocateContextStages, buildChatContext, conservativeTokenEstimator } from '../../src/agent/context';
 import { limitOutput } from '../../src/agent/outputLimiter';
 import { decideReply } from '../../src/agent/replyPolicy';
 import { generateAgentReply, generateAgentResult } from '../../src/agent/respond';
@@ -37,7 +37,7 @@ import { listSkillPackagesTool } from '../../src/tools/implementations/listSkill
 import { routeMessage } from '../../src/telegram/messageRouter';
 import { handleAgentCommand } from '../../src/telegram/commands';
 import { markdownToTelegramHtml } from '../../src/telegram/formatting';
-import { sendSkillResult, truncateForTelegram } from '../../src/telegram/send';
+import { sendMarkdown, sendSkillResult, truncateForTelegram } from '../../src/telegram/send';
 import { ChatMessage } from '../../src/telegram/telegramTypes';
 import { formatLocalTime } from '../../src/utils/time';
 
@@ -429,23 +429,62 @@ describe('telegram formatting', () => {
     expect(media[0].type).toBe('document');
     expect(media[0].caption).toContain('Файлы приложил.');
   });
+
+  it('sends markdown as HTML via sendMessage', async () => {
+    const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => ({ message_id: 1, date: 1, chat: { id: -1001, type: 'supergroup' } }));
+    const bot = {
+      api: {
+        sendMessage,
+      },
+    } as unknown as Bot;
+
+    await sendMarkdown(bot, '-1001', '**важно**', 42);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const args = sendMessage.mock.calls[0];
+    expect(args[0]).toBe('-1001');
+    expect(args[1]).toContain('<b>важно</b>');
+    expect(args[2]).toMatchObject({ parse_mode: 'HTML', message_thread_id: 42 });
+  });
+
+  it('falls back to plain text when HTML sendMessage rejects', async () => {
+    let sendCount = 0;
+    const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => {
+      sendCount += 1;
+      if (sendCount === 1) throw new Error('HTML rejected');
+      return { message_id: 3, date: 1, chat: { id: -1001, type: 'supergroup' } };
+    });
+    const bot = {
+      api: {
+        sendMessage,
+      },
+    } as unknown as Bot;
+
+    await sendMarkdown(bot, '-1001', '**важно**');
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    const plainCall = sendMessage.mock.calls[1];
+    expect(plainCall[1]).toBe('**важно**');
+    expect(plainCall[2]).toMatchObject({ message_thread_id: undefined });
+    expect(plainCall[2]).not.toHaveProperty('parse_mode');
+  });
 });
 
-describe('context trimming', () => {
+describe('context budget', () => {
   it('injects current local time into context', async () => {
     const { store } = await tempStore();
     await writeMood(store, { warmth: 0.2, tension: 0.7, humor: 0.1, updatedAt: new Date().toISOString() });
     const context = await buildChatContext(store, 'который час?', {
-      maxChars: 1000,
-      recentLimit: 5,
-      factsMaxChars: 500,
+      contextWindowTokens: 32000,
+      contextBudgetTokens: 12000,
+      replyMaxTokens: 900,
       timezone: 'Europe/Moscow',
     });
-    expect(String(context[1]?.content)).toContain('Current local time');
-    expect(String(context[1]?.content)).toContain('Europe/Moscow');
-    expect(String(context[0]?.content)).toContain('Mood diary');
-    expect(String(context[0]?.content)).toContain('tension=0.70');
-    expect(String(context[0]?.content)).toContain('Шутки лучше минимизировать');
+    expect(String(context.messages[1]?.content)).toContain('Current local time');
+    expect(String(context.messages[1]?.content)).toContain('Europe/Moscow');
+    expect(String(context.messages[0]?.content)).toContain('Mood diary');
+    expect(String(context.messages[0]?.content)).toContain('tension=0.70');
+    expect(String(context.messages[0]?.content)).toContain('Шутки лучше минимизировать');
     expect(formatLocalTime('Europe/Moscow').length).toBeGreaterThan(10);
   });
 
@@ -460,13 +499,13 @@ describe('context trimming', () => {
     expect(answer).toContain('Режим цензуры: выключен');
     expect((await readChatSettings(store)).profanityMode).toBe('uncensored');
     const context = await buildChatContext(store, 'ответь резко', {
-      maxChars: 1000,
-      recentLimit: 5,
-      factsMaxChars: 500,
+      contextWindowTokens: 32000,
+      contextBudgetTokens: 12000,
+      replyMaxTokens: 900,
       timezone: 'Europe/Moscow',
     });
-    expect(String(context[0]?.content)).toContain('Language mode: uncensored');
-    expect(String(context[0]?.content)).toContain('Мат разрешён');
+    expect(String(context.messages[0]?.content)).toContain('Language mode: uncensored');
+    expect(String(context.messages[0]?.content)).toContain('Мат разрешён');
   });
 
   it('includes usernames in recent chat context for mentions', async () => {
@@ -482,13 +521,13 @@ describe('context trimming', () => {
       isBot: false,
     });
     const context = await buildChatContext(store, 'кому ответить?', {
-      maxChars: 1000,
-      recentLimit: 5,
-      factsMaxChars: 500,
+      contextWindowTokens: 32000,
+      contextBudgetTokens: 12000,
+      replyMaxTokens: 900,
       timezone: 'Europe/Moscow',
     });
-    expect(String(context[0]?.content)).toContain('@username');
-    expect(String(context[2]?.content)).toContain('Сева (@seva): посмотри задачу');
+    expect(String(context.messages[0]?.content)).toContain('@username');
+    expect(String(context.messages[2]?.content)).toContain('Сева (@seva): посмотри задачу');
   });
 
   it('includes recent attachment metadata in agent context', async () => {
@@ -506,18 +545,18 @@ describe('context trimming', () => {
       }],
     });
     const context = await buildChatContext(store, 'пришли тот же файл', {
-      maxChars: 1000,
-      recentLimit: 5,
-      factsMaxChars: 500,
+      contextWindowTokens: 32000,
+      contextBudgetTokens: 12000,
+      replyMaxTokens: 900,
       timezone: 'Europe/Moscow',
     });
-    const memory = String(context[2]?.content);
+    const memory = String(context.messages[2]?.content);
     expect(memory).toContain('artifact=art_existing_csv');
     expect(memory).toContain('filename=random_users.csv');
     expect(memory).not.toContain('caption=');
   });
 
-  it('limits large recent messages before adding them to context', async () => {
+  it('trims a large recent message only when memory budget requires it', async () => {
     const { store } = await tempStore();
     await appendRecentMessage(store, {
       id: 1,
@@ -525,35 +564,121 @@ describe('context trimming', () => {
       userId: '42',
       username: 'seva',
       displayName: 'Сева',
-      text: 'x'.repeat(200),
+      text: 'x'.repeat(5000),
       date: new Date().toISOString(),
       isBot: false,
     });
     const context = await buildChatContext(store, 'что было?', {
-      maxChars: 1000,
-      recentLimit: 5,
-      recentMessageMaxChars: 50,
-      factsMaxChars: 500,
+      contextWindowTokens: 5000,
+      contextBudgetTokens: 1400,
+      replyMaxTokens: 200,
       timezone: 'Europe/Moscow',
     });
-    const memory = String(context[2]?.content);
+    const memory = context.messages.map((message) => String(message.content)).join('\n');
     expect(memory).toContain('[truncated]');
-    expect(memory).not.toContain('x'.repeat(100));
+    expect(memory).not.toContain('x'.repeat(4000));
   });
 
-  it('drops old middle context before system/current input', () => {
-    const trimmed = trimMessagesToBudget(
+  it('keeps separate memory slots for summary facts decisions and recent', async () => {
+    const { store } = await tempStore();
+    await store.writeText('summary '.repeat(2000), 'chat', 'summary.md');
+    await store.writeJson([{ id: 'fact_1', text: 'важный факт', createdAt: new Date().toISOString() }], 'chat', 'facts.json');
+    await store.writeJson([{ id: 'decision_1', text: 'важное решение', createdAt: new Date().toISOString() }], 'chat', 'decisions.json');
+    await appendRecentMessage(store, {
+      id: 1,
+      chatId: '-1001',
+      userId: '42',
+      username: 'seva',
+      displayName: 'Сева',
+      text: 'свежая реплика',
+      date: new Date().toISOString(),
+      isBot: false,
+    });
+
+    const context = await buildChatContext(store, 'что помнишь?', {
+      contextWindowTokens: 5000,
+      contextBudgetTokens: 1400,
+      replyMaxTokens: 200,
+      timezone: 'Europe/Moscow',
+    });
+    const memory = context.messages.map((message) => String(message.content)).join('\n');
+    expect(memory).toContain('summary');
+    expect(memory).toContain('важный факт');
+    expect(memory).toContain('важное решение');
+    expect(memory).toContain('свежая реплика');
+  });
+
+  it('prioritizes a long user over memory', () => {
+    const allocation = allocateContextStages(
       [
-        { role: 'system', content: 'system' },
-        { role: 'system', content: 'old'.repeat(1000) },
-        { role: 'assistant', content: 'older'.repeat(1000) },
-        { role: 'user', content: 'current input' },
+        { kind: 'system', content: 'system prompt' },
+        { kind: 'time', content: 'time' },
+        { kind: 'skills', content: '' },
+        { kind: 'user', content: 'юзер '.repeat(800) },
+        { kind: 'memory', content: 'memory '.repeat(800) },
       ],
-      100,
+      { contextWindowTokens: 5000, contextBudgetTokens: 1400, replyMaxTokens: 300 },
     );
-    expect(trimmed[0]?.content).toBe('system');
-    expect(trimmed.at(-1)?.role).toBe('user');
-    expect(String(trimmed.at(-1)?.content)).toContain('current');
+    expect(allocation.takes.memory).toBeLessThan(allocation.takes.user);
+  });
+
+  it('lets user overflow beyond soft budget but keeps memory inside it', () => {
+    const allocation = allocateContextStages(
+      [
+        { kind: 'system', content: 'system prompt' },
+        { kind: 'time', content: 'time' },
+        { kind: 'skills', content: '' },
+        { kind: 'user', content: 'юзер '.repeat(3000) },
+        { kind: 'memory', content: 'memory '.repeat(3000) },
+      ],
+      { contextWindowTokens: 8000, contextBudgetTokens: 1200, replyMaxTokens: 400 },
+    );
+    expect(allocation.userOverflowTokens).toBeGreaterThan(0);
+    expect(allocation.takes.memory).toBeLessThanOrEqual(allocation.softBudgetTokens);
+  });
+
+  it('clips soft budget to hard window when budget exceeds model window', () => {
+    const allocation = allocateContextStages(
+      [
+        { kind: 'system', content: 'system prompt' },
+        { kind: 'time', content: 'time' },
+        { kind: 'skills', content: '' },
+        { kind: 'user', content: 'hello' },
+        { kind: 'memory', content: 'memory '.repeat(1000) },
+      ],
+      { contextWindowTokens: 1200, contextBudgetTokens: 10000, replyMaxTokens: 300 },
+    );
+    expect(allocation.softBudgetTokens).toBe(allocation.usableHardTokens);
+  });
+
+  it('uses fixed 30k stage budgets for the 50k default context window', () => {
+    const numericEstimator = {
+      estimateText: (text: string) => Number.parseInt(text, 10) || 0,
+      trimTextToTokens: (text: string) => text,
+    };
+    const allocation = allocateContextStages(
+      [
+        { kind: 'system', content: '100000' },
+        { kind: 'time', content: '100000' },
+        { kind: 'skills', content: '100000' },
+        { kind: 'user', content: '14000' },
+        { kind: 'memory', content: '100000' },
+      ],
+      { contextWindowTokens: 50000, contextBudgetTokens: 30000, replyMaxTokens: 1400 },
+      numericEstimator,
+    );
+
+    expect(allocation.softBudgetTokens).toBe(30000);
+    expect(allocation.takes.system).toBe(4000);
+    expect(allocation.takes.time).toBe(150);
+    expect(allocation.takes.skills).toBe(5000);
+    expect(allocation.takes.user).toBe(14000);
+    expect(allocation.takes.memory).toBe(6850);
+  });
+
+  it('does not count image data URLs as text tokens', () => {
+    const textOnly = conservativeTokenEstimator.estimateText('Что на картинке?');
+    expect(textOnly).toBeLessThan(20);
   });
 
   it('attaches current image to VLM request without enabling tools', async () => {
@@ -620,7 +745,7 @@ describe('context trimming', () => {
     let fallbackSawTools = false;
     const reply = await generateAgentReply({
       input: 'ответь по доступному контексту',
-      config: { ...config, contextMaxChars: 6000, llmSupportsTools: true },
+      config: { ...config, contextBudgetTokens: 6000, llmSupportsTools: true },
       store,
       tools: new ToolRegistry(),
       toolContext: { store, scheduler, timezone: 'Europe/Moscow' },
@@ -842,9 +967,14 @@ describe('chat identity', () => {
     });
     expect(answer).toContain('Identity сохранена');
     expect(await readIdentity(store)).toContain('дворецкий');
-    const context = await buildChatContext(store, 'привет', { maxChars: 1000, recentLimit: 5, factsMaxChars: 500, timezone: 'Europe/Moscow' });
-    expect(String(context[0]?.content)).toContain('дворецкий');
-    expect(String(context[0]?.content)).toContain('не переписывается под настроение');
+    const context = await buildChatContext(store, 'привет', {
+      contextWindowTokens: 32000,
+      contextBudgetTokens: 12000,
+      replyMaxTokens: 900,
+      timezone: 'Europe/Moscow',
+    });
+    expect(String(context.messages[0]?.content)).toContain('дворецкий');
+    expect(String(context.messages[0]?.content)).toContain('не переписывается под настроение');
   });
 
   it('trims identity to configured limit', async () => {
@@ -1771,6 +1901,7 @@ describe('tool loop', () => {
     expect(calls).toBe(3);
     expect(execute).toHaveBeenCalledTimes(1);
   });
+
 });
 
 describe('tool schemas', () => {

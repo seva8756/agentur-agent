@@ -38,8 +38,6 @@ export type RecentMessage = {
   attachments?: RecentAttachment[];
 };
 
-export const DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS = 500;
-
 export async function appendRecentMessage(store: FileStore, message: RecentMessage): Promise<void> {
   await store.appendJsonl(message, 'chat', 'recent.jsonl');
 }
@@ -52,7 +50,7 @@ export async function trimRecentMessages(
   store: FileStore,
   fileLimit: number,
   summarizeCount: number,
-  summaryMaxChars: number,
+  summaryFileMaxChars: number,
 ): Promise<void> {
   const messages = await readRecentMessages(store);
   if (messages.length <= fileLimit) return;
@@ -63,7 +61,7 @@ export async function trimRecentMessages(
   const archiveText = archived.map((m) => formatRecentMessageForContext(m)).join('\n');
   const updated = `${existing.trim()}\n\nАрхив контекста ${new Date().toISOString()}:\n${archiveText}`
     .trim()
-    .slice(-summaryMaxChars);
+    .slice(-summaryFileMaxChars);
   await store.writeText(updated, 'chat', 'summary.md');
   await store.writeText(kept.map((m) => JSON.stringify(m)).join('\n') + (kept.length ? '\n' : ''), 'chat', 'recent.jsonl');
 }
@@ -78,7 +76,7 @@ export function selectRecentForContext(messages: RecentMessage[], limit: number)
 
 export function formatRecentMessageForContext(
   message: RecentMessage,
-  maxTextChars = DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS,
+  maxTextChars = 500,
 ): string {
   const thread = message.threadId ? `[thread=${message.threadId}] ` : '';
   const text = limitRecentText(message.text, maxTextChars);

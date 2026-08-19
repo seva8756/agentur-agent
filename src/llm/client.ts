@@ -27,6 +27,7 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
             registry: options.tools,
             context: options.toolContext,
             maxSteps: options.maxSteps ?? config.agentMaxToolSteps,
+            maxTokens: options.maxTokens ?? config.replyMaxTokens,
             completionRetries: config.llmToolLoopRetries,
           });
         } catch (error) {
@@ -38,7 +39,9 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
       const response = await client.chat.completions.create({
         model: config.llmModel,
         messages: fallbackWithoutTools ? withToolFallbackNotice(messages) : messages,
+        max_tokens: options?.maxTokens ?? config.replyMaxTokens,
       });
+      logCompletionUsage('LLM completion usage', response.usage);
       return response.choices[0]?.message.content ?? '';
     },
     minimalCheck: async () => {
@@ -65,6 +68,11 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
       return Boolean(response.choices[0]?.message.tool_calls?.length);
     },
   };
+}
+
+function logCompletionUsage(message: string, usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined): void {
+  if (!usage) return;
+  logger.info(message, `prompt=${usage.prompt_tokens ?? '?'} completion=${usage.completion_tokens ?? '?'} total=${usage.total_tokens ?? '?'}`);
 }
 
 function withToolFallbackNotice(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {

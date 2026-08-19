@@ -18,7 +18,7 @@ export type InteractionSummary = z.infer<typeof interactionSummarySchema>;
 export async function summarizeAndResetInteractions(
   store: FileStore,
   messages: RecentMessage[],
-  summaryMaxChars: number,
+  summaryFileMaxChars: number,
 ): Promise<InteractionSummary | null> {
   if (messages.length === 0) return null;
 
@@ -43,7 +43,7 @@ export async function summarizeAndResetInteractions(
 
   await store.appendJsonl(record, 'chat', 'interaction-summaries.jsonl');
   const existing = await store.readText('', 'chat', 'summary.md');
-  const updated = `${existing.trim()}\n\nInteraction summary ${createdAt}:\n${summary}`.trim().slice(-summaryMaxChars);
+  const updated = `${existing.trim()}\n\nInteraction summary ${createdAt}:\n${summary}`.trim().slice(-summaryFileMaxChars);
   await store.writeText(updated, 'chat', 'summary.md');
   await clearRecentMessages(store);
   return record;

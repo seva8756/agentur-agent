@@ -3,17 +3,14 @@ import { isLlmContextLengthError } from '../llm/errors';
 import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { SkillRunResult, skillResultText, textSkillResult } from '../skills/result';
-import { loadEnabledSkills } from '../skills/loader';
-import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ToolRegistry } from '../tools/registry';
 import { ToolContext } from '../tools/types';
 import { formatLogError, logger } from '../utils/logger';
-import { buildChatContext, trimMessagesToBudget } from './contextBuilder';
+import { buildChatContext } from './context';
+import type { ContextAllocation } from './context';
 import { limitOutput } from './outputLimiter';
 import {
-  buildArtifactToolsPrompt,
   buildContextLimitFallbackNotice,
-  buildEnabledSkillsPrompt,
   buildImageInputFailureUserPrompt,
 } from '../prompts/catalog';
 
@@ -45,21 +42,17 @@ export async function generateAgentResult(params: {
   const outbox: SkillRunResult[] = [];
   const toolContext = { ...params.toolContext, outbox };
   const context = await buildChatContext(params.store, params.input, {
-    maxChars: params.config.contextMaxChars,
-    recentLimit: params.config.recentMessagesContextLimit,
-    recentMessageMaxChars: params.config.recentMessageContextMaxChars,
-    factsMaxChars: params.config.factsMaxChars,
+    contextWindowTokens: params.config.contextWindowTokens,
+    contextBudgetTokens: params.config.contextBudgetTokens,
+    replyMaxTokens: params.config.replyMaxTokens,
     timezone: params.config.agentTimezone,
     currentThreadId: toolContext.currentMessage?.threadId,
+    trustedSkills: params.toolContext.trustedSkills ?? [],
   });
-  const skillsContext = await buildEnabledSkillsContext(params.store, params.toolContext.trustedSkills ?? []);
-  const artifactContext = buildArtifactToolsPrompt();
-  const baseMessages = skillsContext
-    ? [...context.slice(0, -1), { role: 'system' as const, content: [skillsContext, artifactContext].join('\n') }, context[context.length - 1]]
-    : [...context.slice(0, -1), { role: 'system' as const, content: artifactContext }, context[context.length - 1]];
-  const messages = attachImageToLastUserMessage(trimMessagesToBudget(baseMessages, params.config.contextMaxChars), params.image?.dataUrl);
+  logger.info('LLM context budget', formatContextAllocationLog(context.allocation));
+  const messages = attachImageToLastUserMessage(context.messages, params.image?.dataUrl);
   const text = await chatWithFallbacks({ ...params, toolContext }, messages);
-  const modelReply = text.trim() ? limitOutput(text, params.config.agentMaxReplyChars) : '';
+  const modelReply = text.trim() ? limitOutput(text, replyCharsFallback(params.config.replyMaxTokens)) : '';
   const queuedSend = outbox.flatMap((result) => result.send ?? []);
   if (queuedSend.length) {
     const queued = outbox.at(-1);
@@ -70,7 +63,7 @@ export async function generateAgentResult(params: {
     };
     return withModelMediaCaption(result, modelReply);
   }
-  const reply = modelReply || limitOutput('Не нашёл, что ответить.', params.config.agentMaxReplyChars);
+  const reply = modelReply || limitOutput('Не нашёл, что ответить.', replyCharsFallback(params.config.replyMaxTokens));
   return textSkillResult(reply);
 }
 
@@ -87,11 +80,6 @@ function withModelMediaCaption(result: SkillRunResult, modelReply: string): Skil
   };
 }
 
-async function buildEnabledSkillsContext(store: FileStore, trustedSkills: TrustedSkillPromptInfo[]): Promise<string> {
-  const skills = await loadEnabledSkills(store);
-  return buildEnabledSkillsPrompt(skills, trustedSkills);
-}
-
 async function chatWithFallbacks(
   params: {
     input: string;
@@ -102,13 +90,14 @@ async function chatWithFallbacks(
     tools: ToolRegistry;
     toolContext: ToolContext;
   },
-  messages: ReturnType<typeof trimMessagesToBudget>,
+  messages: Awaited<ReturnType<typeof buildChatContext>>['messages'],
 ): Promise<string> {
   try {
     return await params.llm.chat(messages, {
       tools: params.config.llmSupportsTools && !params.image ? params.tools : undefined,
       toolContext: params.toolContext,
       maxSteps: params.config.agentMaxToolSteps,
+      maxTokens: params.config.replyMaxTokens,
     });
   } catch (error) {
     if (isLlmContextLengthError(error)) {
@@ -121,19 +110,19 @@ async function chatWithFallbacks(
       params.store,
       buildImageInputFailureUserPrompt(params.input, reason),
       {
-        maxChars: params.config.contextMaxChars,
-        recentLimit: params.config.recentMessagesContextLimit,
-        recentMessageMaxChars: params.config.recentMessageContextMaxChars,
-        factsMaxChars: params.config.factsMaxChars,
+        contextWindowTokens: params.config.contextWindowTokens,
+        contextBudgetTokens: params.config.contextBudgetTokens,
+        replyMaxTokens: params.config.replyMaxTokens,
         timezone: params.config.agentTimezone,
         currentThreadId: params.toolContext.currentMessage?.threadId,
+        trustedSkills: params.toolContext.trustedSkills ?? [],
       },
     );
-    const fallbackMessages = trimMessagesToBudget(fallbackContext, params.config.contextMaxChars);
-    return params.llm.chat(fallbackMessages, {
+    return params.llm.chat(fallbackContext.messages, {
       tools: undefined,
       toolContext: params.toolContext,
       maxSteps: params.config.agentMaxToolSteps,
+      maxTokens: params.config.replyMaxTokens,
     });
   }
 }
@@ -144,21 +133,18 @@ async function chatWithReducedContextFallback(
     llm: LlmAdapter;
     toolContext: ToolContext;
   },
-  messages: ReturnType<typeof trimMessagesToBudget>,
+  messages: Awaited<ReturnType<typeof buildChatContext>>['messages'],
 ): Promise<string> {
-  const fallbackBudget = Math.max(2000, Math.floor(params.config.contextMaxChars / 3));
-  const reducedMessages = trimMessagesToBudget(
-    withContextLimitNotice(trimMessagesToBudget(stripImageInputs(messages), fallbackBudget)),
-    fallbackBudget,
-  );
+  const reducedMessages = withContextLimitNotice(stripImageInputs(messages));
   return params.llm.chat(reducedMessages, {
     tools: undefined,
     toolContext: params.toolContext,
     maxSteps: params.config.agentMaxToolSteps,
+    maxTokens: params.config.replyMaxTokens,
   });
 }
 
-function withContextLimitNotice(messages: ReturnType<typeof trimMessagesToBudget>): ReturnType<typeof trimMessagesToBudget> {
+function withContextLimitNotice(messages: Awaited<ReturnType<typeof buildChatContext>>['messages']): Awaited<ReturnType<typeof buildChatContext>>['messages'] {
   const notice = buildContextLimitFallbackNotice();
   const first = messages[0];
   if (first?.role === 'system') {
@@ -170,7 +156,7 @@ function withContextLimitNotice(messages: ReturnType<typeof trimMessagesToBudget
   return [{ role: 'system', content: notice }, ...messages];
 }
 
-function stripImageInputs(messages: ReturnType<typeof trimMessagesToBudget>): ReturnType<typeof trimMessagesToBudget> {
+function stripImageInputs(messages: Awaited<ReturnType<typeof buildChatContext>>['messages']): Awaited<ReturnType<typeof buildChatContext>>['messages'] {
   return messages.map((message) => {
     if (!Array.isArray(message.content)) return message;
     const textParts = message.content
@@ -187,7 +173,7 @@ function stripImageInputs(messages: ReturnType<typeof trimMessagesToBudget>): Re
   });
 }
 
-function attachImageToLastUserMessage(messages: ReturnType<typeof trimMessagesToBudget>, dataUrl: string | undefined) {
+function attachImageToLastUserMessage(messages: Awaited<ReturnType<typeof buildChatContext>>['messages'], dataUrl: string | undefined) {
   if (!dataUrl) return messages;
   const copy = [...messages];
   const last = copy[copy.length - 1];
@@ -202,10 +188,25 @@ function attachImageToLastUserMessage(messages: ReturnType<typeof trimMessagesTo
   return copy;
 }
 
-function messageContentToText(content: ReturnType<typeof trimMessagesToBudget>[number]['content']): string {
+function messageContentToText(content: Awaited<ReturnType<typeof buildChatContext>>['messages'][number]['content']): string {
   if (typeof content === 'string') return content;
   if (!content) return '';
   return JSON.stringify(content);
+}
+
+function replyCharsFallback(replyMaxTokens: number): number {
+  return Math.max(500, replyMaxTokens * 6);
+}
+
+function formatContextAllocationLog(allocation: ContextAllocation) {
+  return [
+    `hard=${allocation.usableHardTokens}`,
+    `soft=${allocation.softBudgetTokens}`,
+    `free=${allocation.freeTokens}`,
+    `userExtra=${allocation.userExtraTokens}`,
+    `userOverflow=${allocation.userOverflowTokens}`,
+    `take=system:${allocation.takes.system},time:${allocation.takes.time},skills:${allocation.takes.skills},user:${allocation.takes.user},memory:${allocation.takes.memory},tool:${allocation.takes.toolObservation}`,
+  ].join(' ');
 }
 
 function humanErrorReason(error: unknown): string {

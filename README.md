@@ -78,10 +78,13 @@ LLM_TIMEOUT_MS=45000
 LLM_MAX_RETRIES=1
 LLM_TOOL_LOOP_RETRIES=1
 AGENT_MAX_TOOL_STEPS=6
-AGENT_MAX_REPLY_CHARS=900
-CONTEXT_MAX_CHARS=14000
+CONTEXT_WINDOW_TOKENS=32000
+CONTEXT_BUDGET_TOKENS=12000
+REPLY_MAX_TOKENS=900
 TELEGRAM_SEND_MAX_ITEMS=10
 ```
+
+`CONTEXT_WINDOW_TOKENS` — жёсткое окно выбранной модели. `CONTEXT_BUDGET_TOKENS` — обычный рабочий бюджет текстового prompt; длинный user input может вытеснять память и использовать свободную часть окна. `REPLY_MAX_TOKENS` резервируется под ответ и передаётся провайдеру как `max_tokens`. Лимиты Telegram, HTTP, MCP и хранения истории остаются отдельными byte/size ограничениями.
 
 ## Telegram Setup
 

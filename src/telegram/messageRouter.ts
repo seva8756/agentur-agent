@@ -158,7 +158,7 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
 
   const recent = await readRecentMessages(deps.store);
   if (!fullCapture && recent.length >= deps.config.interactionSummaryEveryMessages) {
-    const summary = await summarizeAndResetInteractions(deps.store, recent, deps.config.summaryMaxChars);
+    const summary = await summarizeAndResetInteractions(deps.store, recent, deps.config.summaryFileMaxChars);
     logger.info('Interaction messages summarized and reset', {
       chatId: message.chatId,
       messageCount: summary?.messageCount ?? recent.length,
@@ -172,7 +172,7 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
       deps.store,
       deps.config.recentMessagesFileLimit,
       deps.config.messagesToSummarizeOnRotation,
-      deps.config.summaryMaxChars,
+      deps.config.summaryFileMaxChars,
     );
   }
 }

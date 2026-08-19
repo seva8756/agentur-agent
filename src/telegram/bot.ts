@@ -156,7 +156,7 @@ async function handleIncomingChatMessage(
   });
   const recent = await readRecentMessages(runtime.store);
   if (!params.runtimeManager.isFullCaptureChat(message.chatId) && recent.length >= params.config.interactionSummaryEveryMessages) {
-    await summarizeAndResetInteractions(runtime.store, recent, params.config.summaryMaxChars);
+    await summarizeAndResetInteractions(runtime.store, recent, params.config.summaryFileMaxChars);
   }
 }
 

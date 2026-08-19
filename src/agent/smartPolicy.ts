@@ -2,10 +2,12 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { LlmAdapter } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { readMood } from '../memory/moodDiary';
-import { DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS, formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
+import { formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
 import { buildSmartReplySystemPrompt, buildSmartReplyUserPrompt } from '../prompts/catalog';
 import { ChatMessage } from '../telegram/telegramTypes';
 import { logger } from '../utils/logger';
+
+const SMART_REPLY_RECENT_MESSAGE_MAX_CHARS = 500;
 
 export type SmartDecision = {
   shouldReply: boolean;
@@ -21,7 +23,7 @@ export async function decideSmartReply(
 
   const mood = await readMood(store);
   const recent = selectRecentForContext(await readRecentMessages(store), 12)
-    .map((item) => formatRecentMessageForContext(item, DEFAULT_RECENT_MESSAGE_CONTEXT_MAX_CHARS))
+    .map((item) => formatRecentMessageForContext(item, SMART_REPLY_RECENT_MESSAGE_MAX_CHARS))
     .join('\n');
   const messages: ChatCompletionMessageParam[] = [
     {
