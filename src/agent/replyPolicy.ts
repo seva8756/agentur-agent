@@ -2,7 +2,7 @@ import { ChatMessage } from '../telegram/telegramTypes';
 
 export type ReplyDecision = {
   shouldReply: boolean;
-  reason: 'mention' | 'reply_to_bot' | 'agent_command' | 'direct_address' | 'private_chat' | 'skill' | 'cron' | 'silent';
+  reason: 'mention' | 'reply_to_bot' | 'agent_command' | 'private_chat' | 'skill' | 'cron' | 'silent';
 };
 
 export function decideReply(message: ChatMessage, botUsername: string, skillMatched = false): ReplyDecision {
@@ -13,16 +13,16 @@ export function decideReply(message: ChatMessage, botUsername: string, skillMatc
   if (message.replyToBot) return { shouldReply: true, reason: 'reply_to_bot' };
   if (/^\/agentur(?:@\w+)?(?:\s|$)/i.test(normalized)) return { shouldReply: true, reason: 'agent_command' };
   if (message.chatType === 'private') return { shouldReply: true, reason: 'private_chat' };
-  if (normalized.includes(`@${username}`)) return { shouldReply: true, reason: 'mention' };
-  if (/^(бот|ассистент|эй бот|agent|assistant)[,!:\s]/i.test(normalized)) {
-    return { shouldReply: true, reason: 'direct_address' };
-  }
+  if (new RegExp(`@${escapeRegExp(username)}(?![\\w])`).test(normalized)) return { shouldReply: true, reason: 'mention' };
   return { shouldReply: false, reason: 'silent' };
 }
 
 export function stripBotAddress(text: string, botUsername: string): string {
   return text
     .replace(new RegExp(`@${botUsername.replace(/^@/, '')}`, 'gi'), '')
-    .replace(/^(бот|ассистент|эй бот|agent|assistant)[,!:\s]+/i, '')
     .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

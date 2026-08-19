@@ -362,10 +362,12 @@ describe('single-chat filtering', () => {
 describe('reply policy', () => {
   it('replies on mention, reply, and /agentur but not casual chat', () => {
     expect(decideReply(msg({ text: 'hey @agentbot' }), 'agentbot').shouldReply).toBe(true);
+    expect(decideReply(msg({ text: 'hey @agentbot_test' }), 'agentbot').shouldReply).toBe(false);
     expect(decideReply(msg({ replyToBot: true }), 'agentbot').shouldReply).toBe(true);
     expect(decideReply(msg({ text: '/agentur status' }), 'agentbot').shouldReply).toBe(true);
     expect(decideReply(msg({ text: '/agentur@agentbot status' }), 'agentbot').shouldReply).toBe(true);
     expect(decideReply(msg({ text: '/agents status' }), 'agentbot').shouldReply).toBe(false);
+    expect(decideReply(msg({ text: 'бот, помоги' }), 'agentbot').shouldReply).toBe(false);
     expect(decideReply(msg({ text: 'люди, как дела?' }), 'agentbot').shouldReply).toBe(false);
   });
 });
