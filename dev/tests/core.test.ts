@@ -34,6 +34,7 @@ import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
 import { createSendPayloadTool, sendPayloadTool } from '../../src/tools/implementations/sendPayload';
 import { runSkillToolTool } from '../../src/tools/implementations/runSkillTool';
 import { listSkillPackagesTool } from '../../src/tools/implementations/listSkillPackages';
+import { buildContextPolicy } from '../../src/agent/context/policy';
 import { routeMessage } from '../../src/telegram/messageRouter';
 import { handleAgentCommand } from '../../src/telegram/commands';
 import { markdownToTelegramHtml } from '../../src/telegram/formatting';
@@ -1902,6 +1903,122 @@ describe('tool loop', () => {
     expect(result).toBe('handled after retry');
     expect(calls).toBe(3);
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('trims oversized tool observations before the next tool-loop iteration', async () => {
+    const registry = new ToolRegistry();
+    const hugeResult = 'данные '.repeat(10000);
+    registry.register({
+      name: 'huge_tool',
+      description: 'huge',
+      schema: z.object({}),
+      execute: async () => hugeResult,
+    });
+    let capturedToolContent = '';
+    const fakeClient = {
+      chat: {
+        completions: {
+          create: async ({ messages }: any) => {
+            const lastTool = messages.filter((message: any) => message.role === 'tool').at(-1);
+            if (lastTool) {
+              capturedToolContent = lastTool.content;
+              return { choices: [{ message: { role: 'assistant', content: 'done' } }] };
+            }
+            return {
+              choices: [{
+                message: {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [{
+                    id: 'huge-1',
+                    type: 'function',
+                    function: { name: 'huge_tool', arguments: '{}' },
+                  }],
+                },
+              }],
+            };
+          },
+        },
+      },
+    };
+    const budgetConfig = { contextWindowTokens: 2000, contextBudgetTokens: 100, replyMaxTokens: 10 };
+    const policy = buildContextPolicy(budgetConfig);
+    policy.stages.toolObservation.maxTokens = 20;
+    const allocation = allocateContextStages(
+      [{ kind: 'user', content: 'go' }],
+      budgetConfig,
+    );
+
+    const result = await runToolLoop({
+      client: fakeClient as any,
+      model: 'test',
+      messages: [{ role: 'user', content: 'go' }],
+      registry,
+      context: { store: (await tempStore()).store, timezone: 'UTC' },
+      maxSteps: 2,
+      contextBudget: { allocation, policy },
+    });
+
+    expect(result).toBe('done');
+    expect(capturedToolContent.length).toBeLessThan(hugeResult.length);
+    expect(capturedToolContent).toContain('[truncated: tool result exceeded context budget]');
+  });
+
+  it('counts tool schemas when fitting tool observations', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'schema_heavy_tool',
+      description: 'описание '.repeat(2000),
+      schema: z.object({}),
+      execute: async () => 'small result',
+    });
+    let capturedToolContent = '';
+    const fakeClient = {
+      chat: {
+        completions: {
+          create: async ({ messages }: any) => {
+            const lastTool = messages.filter((message: any) => message.role === 'tool').at(-1);
+            if (lastTool) {
+              capturedToolContent = lastTool.content;
+              return { choices: [{ message: { role: 'assistant', content: 'done' } }] };
+            }
+            return {
+              choices: [{
+                message: {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [{
+                    id: 'schema-heavy-1',
+                    type: 'function',
+                    function: { name: 'schema_heavy_tool', arguments: '{}' },
+                  }],
+                },
+              }],
+            };
+          },
+        },
+      },
+    };
+    const budgetConfig = { contextWindowTokens: 1000, contextBudgetTokens: 100, replyMaxTokens: 10 };
+    const policy = buildContextPolicy(budgetConfig);
+    policy.stages.toolObservation.maxTokens = 20;
+    const allocation = allocateContextStages(
+      [{ kind: 'user', content: 'go' }],
+      budgetConfig,
+    );
+
+    const result = await runToolLoop({
+      client: fakeClient as any,
+      model: 'test',
+      messages: [{ role: 'user', content: 'go' }],
+      registry,
+      context: { store: (await tempStore()).store, timezone: 'UTC' },
+      maxSteps: 2,
+      contextBudget: { allocation, policy },
+    });
+
+    expect(result).toBe('done');
+    expect(capturedToolContent).toBe('[Tool result omitted: context window exhausted.]');
   });
 
 });

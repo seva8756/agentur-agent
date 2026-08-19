@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type { RecentMessage } from '../../memory/recentMessages';
 import type { TrustedSkillPromptInfo } from '../../skills/trustedTypes';
+import type { ContextPolicy } from './policy';
 
 export type ContextBudgetConfig = {
   contextWindowTokens: number;
@@ -47,4 +48,5 @@ export type ContextAllocation = {
 export type BuiltContext = {
   messages: ChatCompletionMessageParam[];
   allocation: ContextAllocation;
+  policy: ContextPolicy;
 };

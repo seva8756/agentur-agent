@@ -27,7 +27,7 @@ export function buildContextPolicy(config: ContextBudgetConfig): ContextPolicy {
       skills: { maxTokens: Math.min(5000, soft) },
       user: { maxTokens: 14000 },
       memory: { minTokens: 6850, maxTokens: soft },
-      toolObservation: { maxTokens: 0 },
+      toolObservation: { maxTokens: 10000 },
     },
     memoryParts: {
       summary: { minTokens: 96, share: 0.35 },

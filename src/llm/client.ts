@@ -29,6 +29,7 @@ export function createLlmClient(config: AppConfig): LlmAdapter {
             maxSteps: options.maxSteps ?? config.agentMaxToolSteps,
             maxTokens: options.maxTokens ?? config.replyMaxTokens,
             completionRetries: config.llmToolLoopRetries,
+            contextBudget: options.contextBudget,
           });
         } catch (error) {
           if (!shouldRetryWithoutTools(error)) throw error;

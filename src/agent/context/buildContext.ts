@@ -71,7 +71,7 @@ export async function buildChatContext(
   pushSystem(messages, estimator.trimTextToTokens(skillsPrompt, allocation.takes.skills));
   messages.push({ role: 'user', content: estimator.trimTextToTokens(userInput, allocation.takes.user) });
 
-  return { messages, allocation };
+  return { messages, allocation, policy };
 }
 
 function pushSystem(messages: ChatCompletionMessageParam[], content: string): void {

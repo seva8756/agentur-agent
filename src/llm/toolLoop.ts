@@ -1,11 +1,14 @@
 import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { z } from 'zod';
+import { createToolObservationBudget, fitToolObservationContent } from '../agent/context/toolObservationBudget';
+import type { ToolObservationBudget } from '../agent/context/toolObservationBudget';
 import { formatLogError, logger } from '../utils/logger';
 import { ToolRegistry } from '../tools/registry';
 import { toOpenAITool, ToolContext } from '../tools/types';
 import { buildNativeToolCallingNotice } from '../prompts/catalog';
 import { isRetryableLlmTransportError } from './errors';
+import type { LlmContextBudget } from './types';
 
 export async function runToolLoop(params: {
   client: OpenAI;
@@ -16,11 +19,13 @@ export async function runToolLoop(params: {
   maxSteps: number;
   maxTokens?: number;
   completionRetries?: number;
+  contextBudget?: LlmContextBudget;
 }): Promise<string> {
   const tools = params.registry.list().map(toOpenAITool);
   const messages: ChatCompletionMessageParam[] = tools.length
     ? withNativeToolCallingNotice(params.messages)
     : [...params.messages];
+  const toolBudget = params.contextBudget ? createToolObservationBudget(params.contextBudget, messages, tools) : undefined;
   for (let step = 0; step < params.maxSteps; step += 1) {
     const response = await createCompletionWithRetry(params, messages, tools);
     logCompletionUsage('LLM tool loop usage', step + 1, response.usage);
@@ -31,21 +36,54 @@ export async function runToolLoop(params: {
     for (const call of message.tool_calls) {
       const tool = params.registry.get(call.function.name);
       if (!tool) {
-        messages.push({ role: 'tool', tool_call_id: call.id, content: `Unknown tool ${call.function.name}` });
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: fitToolObservationForLoop(`Unknown tool ${call.function.name}`, call.id, messages, toolBudget, call.function.name),
+        });
         continue;
       }
       try {
         const parsed = tool.schema.parse(JSON.parse(call.function.arguments || '{}'));
         logger.info(`Executing tool ${tool.name}`);
         const result = await tool.execute(parsed, params.context);
-        messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: fitToolObservationForLoop(result, call.id, messages, toolBudget, tool.name),
+        });
       } catch (error) {
         logger.warn(`Tool failed: ${tool.name}`, formatLogError(error));
-        messages.push({ role: 'tool', tool_call_id: call.id, content: formatToolError(tool.name, error) });
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: fitToolObservationForLoop(formatToolError(tool.name, error), call.id, messages, toolBudget, tool.name),
+        });
       }
     }
   }
   return 'Не смог завершить действие: достигнут лимит внутренних действий.';
+}
+
+function fitToolObservationForLoop(
+  content: string,
+  toolCallId: string,
+  messages: ChatCompletionMessageParam[],
+  budget: ToolObservationBudget | undefined,
+  toolName: string,
+): string {
+  const fitted = fitToolObservationContent(content, toolCallId, messages, budget);
+  if (!fitted.limited) return fitted.content;
+  logger.info('Tool observation budget', {
+    toolName,
+    raw: fitted.rawTokens,
+    softContent: fitted.softContentTokens,
+    hardContent: fitted.hardContentTokens,
+    fitted: fitted.fittedTokens,
+    overflow: fitted.overflowTokens,
+    trimmed: fitted.trimmed,
+  });
+  return fitted.content;
 }
 
 function logCompletionUsage(

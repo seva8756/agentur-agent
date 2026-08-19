@@ -1,6 +1,6 @@
 import { AppConfig } from '../config';
 import { isLlmContextLengthError } from '../llm/errors';
-import { LlmAdapter } from '../llm/types';
+import type { LlmAdapter, LlmContextBudget } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
 import { SkillRunResult, skillResultText, textSkillResult } from '../skills/result';
 import { ToolRegistry } from '../tools/registry';
@@ -51,7 +51,11 @@ export async function generateAgentResult(params: {
   });
   logger.info('LLM context budget', formatContextAllocationLog(context.allocation));
   const messages = attachImageToLastUserMessage(context.messages, params.image?.dataUrl);
-  const text = await chatWithFallbacks({ ...params, toolContext }, messages);
+  const text = await chatWithFallbacks(
+    { ...params, toolContext },
+    messages,
+    { allocation: context.allocation, policy: context.policy },
+  );
   const modelReply = text.trim() ? limitOutput(text, replyCharsFallback(params.config.replyMaxTokens)) : '';
   const queuedSend = outbox.flatMap((result) => result.send ?? []);
   if (queuedSend.length) {
@@ -91,6 +95,7 @@ async function chatWithFallbacks(
     toolContext: ToolContext;
   },
   messages: Awaited<ReturnType<typeof buildChatContext>>['messages'],
+  contextBudget?: LlmContextBudget,
 ): Promise<string> {
   try {
     return await params.llm.chat(messages, {
@@ -98,6 +103,7 @@ async function chatWithFallbacks(
       toolContext: params.toolContext,
       maxSteps: params.config.agentMaxToolSteps,
       maxTokens: params.config.replyMaxTokens,
+      contextBudget,
     });
   } catch (error) {
     if (isLlmContextLengthError(error)) {
