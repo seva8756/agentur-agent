@@ -4,9 +4,10 @@ import { artifactContentPath, readArtifactMeta } from '../memory/artifactStore';
 import { FileStore } from '../memory/fileStore';
 import { SKILL_SEND_MAX_ITEMS, SkillRunResult, SkillSend, skillResultText } from '../skills/result';
 import { logger } from '../utils/logger';
-import { markdownToTelegramHtml } from './formatting';
+import { hasTelegramRichMarkup, markdownToTelegramHtml } from './formatting';
 
 const TELEGRAM_MESSAGE_MAX_CHARS = 4096;
+const TELEGRAM_RICH_MESSAGE_MAX_CHARS = 32768;
 const TELEGRAM_CAPTION_MAX_CHARS = 1024;
 const TRUNCATED_SUFFIX = '\n\n...[сообщение обрезано]';
 
@@ -15,37 +16,55 @@ export async function replyMarkdown(
   text: string,
   replyToMessageId?: number,
   threadId?: number,
-): Promise<Message.TextMessage> {
-  const safeText = truncateForTelegram(text, TELEGRAM_MESSAGE_MAX_CHARS);
-  const html = markdownToTelegramHtml(safeText);
-  try {
-    return await callTelegramWithRetry(() => ctx.reply(html, {
-      parse_mode: 'HTML',
-      reply_to_message_id: replyToMessageId,
+): Promise<Message> {
+  const replyOptions = {
+    reply_to_message_id: replyToMessageId,
+    message_thread_id: threadId,
+  };
+  return sendFormattedTelegramText({
+    text,
+    sendRich: (markdown) => ctx.replyWithRichMessage({ markdown }, {
       message_thread_id: threadId,
-    }));
-  } catch (error) {
-    logger.warn('Telegram rejected formatted reply, falling back to plain text', error);
-    return callTelegramWithRetry(() => ctx.reply(safeText, {
-      reply_to_message_id: replyToMessageId,
-      message_thread_id: threadId,
-    }));
-  }
+      ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : {}),
+    }),
+    sendHtml: (html) => ctx.reply(html, { parse_mode: 'HTML', ...replyOptions }),
+    sendPlain: (plain) => ctx.reply(plain, replyOptions),
+  });
 }
 
-export async function sendMarkdown(bot: Bot, chatId: string, text: string, threadId?: number | null): Promise<Message.TextMessage> {
-  const safeText = truncateForTelegram(text, TELEGRAM_MESSAGE_MAX_CHARS);
-  const html = markdownToTelegramHtml(safeText);
+export async function sendMarkdown(bot: Bot, chatId: string, text: string, threadId?: number | null): Promise<Message> {
+  const thread = { message_thread_id: threadId ?? undefined };
+  return sendFormattedTelegramText({
+    text,
+    sendRich: (markdown) => bot.api.sendRichMessage(chatId, { markdown }, thread),
+    sendHtml: (html) => bot.api.sendMessage(chatId, html, { parse_mode: 'HTML', ...thread }),
+    sendPlain: (plain) => bot.api.sendMessage(chatId, plain, thread),
+  });
+}
+
+async function sendFormattedTelegramText(params: {
+  text: string;
+  sendRich: (markdown: string) => Promise<Message>;
+  sendHtml: (html: string) => Promise<Message>;
+  sendPlain: (text: string) => Promise<Message>;
+}): Promise<Message> {
+  const safeText = truncateForTelegram(params.text, TELEGRAM_MESSAGE_MAX_CHARS);
+  if (!hasTelegramRichMarkup(params.text)) {
+    return callTelegramWithRetry(() => params.sendPlain(safeText));
+  }
+  const richText = truncateForTelegram(params.text, TELEGRAM_RICH_MESSAGE_MAX_CHARS);
   try {
-    return await callTelegramWithRetry(() => bot.api.sendMessage(chatId, html, {
-      parse_mode: 'HTML',
-      message_thread_id: threadId ?? undefined,
-    }));
+    return await callTelegramWithRetry(() => params.sendRich(richText));
   } catch (error) {
-    logger.warn('Telegram rejected formatted message, falling back to plain text', error);
-    return callTelegramWithRetry(() => bot.api.sendMessage(chatId, safeText, {
-      message_thread_id: threadId ?? undefined,
-    }));
+    if (!isTelegramBadRequest(error)) throw error;
+    logger.warn('Telegram rejected rich markdown as a bad request, falling back to HTML', error);
+  }
+  try {
+    return await callTelegramWithRetry(() => params.sendHtml(markdownToTelegramHtml(safeText)));
+  } catch (error) {
+    if (!isTelegramBadRequest(error)) throw error;
+    logger.warn('Telegram rejected HTML formatting as a bad request, falling back to plain text', error);
+    return callTelegramWithRetry(() => params.sendPlain(safeText));
   }
 }
 
@@ -66,11 +85,15 @@ export async function replySkillResult(
           reply_to_message_id: replyToMessageId,
           message_thread_id: threadId,
         } as never),
-        sendMediaGroup: (media, options) => ctx.api.sendMediaGroup(ctx.chat!.id, media, {
+        sendMediaGroup: (media, options) => ctx.api.sendMediaGroup(ctx.chat!.id, media as never, {
           ...options,
           reply_to_message_id: replyToMessageId,
           message_thread_id: threadId,
         } as never),
+        sendRich: (markdown) => ctx.replyWithRichMessage({ markdown }, {
+          message_thread_id: threadId,
+          ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : {}),
+        }),
         sendText: (text, options) => ctx.reply(text, {
           ...options,
           reply_to_message_id: replyToMessageId,
@@ -103,10 +126,13 @@ export async function sendSkillResult(
           ...options,
           message_thread_id: threadId ?? undefined,
         } as never),
-        sendMediaGroup: (media, options) => bot.api.sendMediaGroup(chatId, media, {
+        sendMediaGroup: (media, options) => bot.api.sendMediaGroup(chatId, media as never, {
           ...options,
           message_thread_id: threadId ?? undefined,
         } as never),
+        sendRich: (markdown) => bot.api.sendRichMessage(chatId, { markdown }, {
+          message_thread_id: threadId ?? undefined,
+        }),
         sendText: (text, options) => bot.api.sendMessage(chatId, text, {
           ...options,
           message_thread_id: threadId ?? undefined,
@@ -149,6 +175,7 @@ type SendTelegramPayloadParams = {
     media: MediaGroupInput[],
     options: Record<string, unknown>,
   ) => Promise<Message[]>;
+  sendRich: (markdown: string) => Promise<Message>;
   sendText: (text: string, options: Record<string, unknown>) => Promise<Message>;
 };
 
@@ -190,10 +217,12 @@ async function sendTextPayload(
   index: number,
 ): Promise<Message> {
   const text = send.text ?? send.caption ?? (index === 0 ? params.result.reply : undefined) ?? 'Готово.';
-  const safeText = truncateForTelegram(text, TELEGRAM_MESSAGE_MAX_CHARS);
-  return callTelegramWithRetry(() => params.sendText(markdownToTelegramHtml(safeText), {
-    parse_mode: 'HTML' as ParseMode,
-  }));
+  return sendFormattedTelegramText({
+    text,
+    sendRich: params.sendRich,
+    sendHtml: (html) => params.sendText(html, { parse_mode: 'HTML' as ParseMode }),
+    sendPlain: (plain) => params.sendText(plain, {}),
+  });
 }
 
 async function sendMediaPayload(
@@ -305,6 +334,10 @@ async function callTelegramWithRetry<T>(fn: () => Promise<T>, attempts = 3): Pro
   throw lastError;
 }
 
+function isTelegramBadRequest(error: unknown): boolean {
+  return telegramStatus(error) === 400;
+}
+
 function isRetryableTelegramError(error: unknown): boolean {
   const status = telegramStatus(error);
   return status === 429 || (status !== undefined && status >= 500 && status < 600);
@@ -317,8 +350,15 @@ function retryDelayMs(error: unknown, attempt: number): number {
 }
 
 function telegramStatus(error: unknown): number | undefined {
-  const candidate = error as { status?: unknown; error?: { status?: unknown } } | undefined;
-  const status = candidate?.status ?? candidate?.error?.status;
+  const candidate = error as {
+    status?: unknown;
+    error_code?: unknown;
+    error?: { status?: unknown; error_code?: unknown };
+  } | undefined;
+  const status = candidate?.error_code
+    ?? candidate?.status
+    ?? candidate?.error?.error_code
+    ?? candidate?.error?.status;
   return typeof status === 'number' ? status : undefined;
 }
 

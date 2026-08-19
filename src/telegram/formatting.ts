@@ -1,6 +1,10 @@
 const TOKEN_PREFIX = '\uE000';
 const TOKEN_SUFFIX = '\uE001';
 
+export function hasTelegramRichMarkup(text: string): boolean {
+  return markdownToTelegramHtml(text).includes('<') || /^(#{1,6}|[-*+]|\d+\.)\s/m.test(text);
+}
+
 export function markdownToTelegramHtml(text: string): string {
   const tokens: string[] = [];
   const token = (html: string): string => {

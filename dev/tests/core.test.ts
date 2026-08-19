@@ -37,7 +37,7 @@ import { listSkillPackagesTool } from '../../src/tools/implementations/listSkill
 import { buildContextPolicy } from '../../src/agent/context/policy';
 import { routeMessage } from '../../src/telegram/messageRouter';
 import { handleAgentCommand } from '../../src/telegram/commands';
-import { markdownToTelegramHtml } from '../../src/telegram/formatting';
+import { hasTelegramRichMarkup, markdownToTelegramHtml } from '../../src/telegram/formatting';
 import { sendMarkdown, sendSkillResult, truncateForTelegram } from '../../src/telegram/send';
 import { ChatMessage } from '../../src/telegram/telegramTypes';
 import { formatLocalTime } from '../../src/utils/time';
@@ -53,6 +53,14 @@ function testConfig(dataDir: string): AppConfig {
     LLM_SUPPORTS_TOOLS: 'false',
     AGENT_DATA_DIR: dataDir,
   });
+}
+
+function telegramError(errorCode: number, message: string): Error {
+  return Object.assign(new Error(message), { error_code: errorCode });
+}
+
+function telegramBadRequest(message: string): Error {
+  return telegramError(400, message);
 }
 
 async function tempStore(): Promise<{ dir: string; store: FileStore; config: AppConfig; scheduler: AgentScheduler }> {
@@ -398,6 +406,14 @@ describe('telegram formatting', () => {
     expect(html).toBe('<pre><code>if (x &lt; y) return a &amp; b;</code></pre>');
   });
 
+  it('detects telegram rich markup without treating plain chat as markdown', () => {
+    expect(hasTelegramRichMarkup('Ок, сделал.')).toBe(false);
+    expect(hasTelegramRichMarkup('Добавь SKILL_HTTP_ALLOWED_ORIGINS=*')).toBe(false);
+    expect(hasTelegramRichMarkup('**важно**')).toBe(true);
+    expect(hasTelegramRichMarkup('файл `.txt`')).toBe(true);
+    expect(hasTelegramRichMarkup('- пункт')).toBe(true);
+  });
+
   it('sends compatible media payloads as one Telegram media group', async () => {
     const { store } = await tempStore();
     const sendMediaGroup = vi.fn(async (_chatId: string, media: unknown[]) => media.map((_item, index) => ({
@@ -433,38 +449,122 @@ describe('telegram formatting', () => {
     expect(media[0].caption).toContain('Файлы приложил.');
   });
 
-  it('sends markdown as HTML via sendMessage', async () => {
-    const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => ({ message_id: 1, date: 1, chat: { id: -1001, type: 'supergroup' } }));
+  it('sends markdown as Telegram rich markdown', async () => {
+    const sendRichMessage = vi.fn(async (_chatId: string, _rich: unknown, _options?: unknown) => ({ message_id: 1, date: 1, chat: { id: -1001, type: 'supergroup' } }));
+    const sendMessage = vi.fn();
     const bot = {
       api: {
+        sendRichMessage,
         sendMessage,
       },
     } as unknown as Bot;
 
     await sendMarkdown(bot, '-1001', '**важно**', 42);
 
+    expect(sendRichMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    const args = sendRichMessage.mock.calls[0];
+    expect(args[0]).toBe('-1001');
+    expect(args[1]).toEqual({ markdown: '**важно**' });
+    expect(args[2]).toMatchObject({ message_thread_id: 42 });
+  });
+
+  it('sends plain chat text without rich messages', async () => {
+    const sendRichMessage = vi.fn();
+    const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => ({ message_id: 4, date: 1, chat: { id: -1001, type: 'supergroup' } }));
+    const bot = {
+      api: {
+        sendRichMessage,
+        sendMessage,
+      },
+    } as unknown as Bot;
+
+    await sendMarkdown(bot, '-1001', 'Ок, сделал.', 42);
+
+    expect(sendRichMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0][1]).toBe('Ок, сделал.');
+    expect(sendMessage.mock.calls[0][2]).toMatchObject({ message_thread_id: 42 });
+    expect(sendMessage.mock.calls[0][2]).not.toHaveProperty('parse_mode');
+  });
+
+  it('sends skill text payloads as rich markdown', async () => {
+    const { store } = await tempStore();
+    const sendRichMessage = vi.fn(async (_chatId: string, _rich: unknown, _options?: unknown) => ({ message_id: 8, date: 1, chat: { id: -1001, type: 'supergroup' } }));
+    const sendMessage = vi.fn();
+    const bot = {
+      api: { sendRichMessage, sendMessage },
+    } as unknown as Bot;
+
+    await sendSkillResult(bot, store, '-1001', {
+      ok: true,
+      reply: 'Готово.',
+      send: [{ kind: 'message', text: '**готово**' }],
+    }, 42, 10);
+
+    expect(sendRichMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendRichMessage.mock.calls[0][1]).toEqual({ markdown: '**готово**' });
+    expect(sendRichMessage.mock.calls[0][2]).toMatchObject({ message_thread_id: 42 });
+  });
+
+  it('falls back to HTML when rich markdown is a bad request', async () => {
+    const sendRichMessage = vi.fn(async () => {
+      throw telegramBadRequest('can\'t parse markdown');
+    });
+    const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => ({ message_id: 2, date: 1, chat: { id: -1001, type: 'supergroup' } }));
+    const bot = {
+      api: {
+        sendRichMessage,
+        sendMessage,
+      },
+    } as unknown as Bot;
+
+    await sendMarkdown(bot, '-1001', '**важно**', 42);
+
+    expect(sendRichMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const args = sendMessage.mock.calls[0];
-    expect(args[0]).toBe('-1001');
     expect(args[1]).toContain('<b>важно</b>');
     expect(args[2]).toMatchObject({ parse_mode: 'HTML', message_thread_id: 42 });
   });
 
-  it('falls back to plain text when HTML sendMessage rejects', async () => {
+  it('does not fall back when rich markdown fails with a non-parse error', async () => {
+    const sendRichMessage = vi.fn(async () => {
+      throw telegramError(403, 'Forbidden: bot was kicked');
+    });
+    const sendMessage = vi.fn();
+    const bot = {
+      api: {
+        sendRichMessage,
+        sendMessage,
+      },
+    } as unknown as Bot;
+
+    await expect(sendMarkdown(bot, '-1001', '**важно**')).rejects.toMatchObject({ error_code: 403 });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to plain text when HTML sendMessage is a bad request', async () => {
+    const sendRichMessage = vi.fn(async () => {
+      throw telegramBadRequest('can\'t parse markdown');
+    });
     let sendCount = 0;
     const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => {
       sendCount += 1;
-      if (sendCount === 1) throw new Error('HTML rejected');
+      if (sendCount === 1) throw telegramBadRequest('can\'t parse entities');
       return { message_id: 3, date: 1, chat: { id: -1001, type: 'supergroup' } };
     });
     const bot = {
       api: {
+        sendRichMessage,
         sendMessage,
       },
     } as unknown as Bot;
 
     await sendMarkdown(bot, '-1001', '**важно**');
 
+    expect(sendRichMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     const plainCall = sendMessage.mock.calls[1];
     expect(plainCall[1]).toBe('**важно**');
