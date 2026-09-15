@@ -214,6 +214,7 @@ function helpText(): string {
     `${COMMAND_PREFIX} mcp set-token <id> <SECRET_KEY> — использовать secret как Bearer token`,
     `${COMMAND_PREFIX} mcp tools <id> — показать tools MCP server`,
     `${COMMAND_PREFIX} mcp allow-tool <id> <tool> — разрешить конкретный tool`,
+    `${COMMAND_PREFIX} mcp allow-resource <id> <uri-or-prefix*> — разрешить MCP resource`,
     `${COMMAND_PREFIX} mcp delete <id> — удалить MCP server из этого чата`,
     '',
     // Навыки (skills)

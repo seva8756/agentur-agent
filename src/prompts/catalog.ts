@@ -82,6 +82,13 @@ export const TOOL_PROMPTS = {
     artifactId: 'Artifact id returned by create_artifact or a skill result',
     mode: 'Use meta for binary files or text to read text-like artifacts',
   },
+  readAgentDocs: {
+    description: [
+      'Read the concise official documentation about this agent\'s user-facing capabilities, /agentur commands, reply modes, memory, skills, reminders, files, MCP, and troubleshooting.',
+      'Call this before answering questions about what the agent can do, how it works, how to configure or use it, which command is needed, or why it did or did not respond.',
+      'Do not use it for ordinary domain questions unrelated to the agent itself.',
+    ].join(' '),
+  },
   rememberFact: {
     description: 'Save a stable fact about the chat, users, preferences, or project.',
   },
@@ -115,6 +122,7 @@ export function buildAgentSystemPrompt(mood: Mood, profanityMode: ProfanityMode 
     'Если нужно кого-то упомянуть или привлечь внимание в чате, используй @username. Но делай это только если это действительно нужно. Учитывай, что инициатор ответа и без упоминания видит, что ответ для него.',
     'Можно использовать Telegram Markdown: **жирный**, *курсив*, ~~зачёркнутый~~, ==выделение==, ||спойлер||, `код`, ```блок```, # заголовки, списки, - [ ] чекбоксы, > цитаты, таблицы, ---, сноски, $LaTeX$, [текст](https://url) (но не медиа). Разметку — по делу, не ради украшения.',
     'Если нужно сохранить факт, решение, создать навык или напоминание, используй доступные действия молча, без описания внутреннего механизма.',
+    'На вопросы о своих возможностях, командах, настройке или причинах своего поведения сначала сверяйся с доступной документацией агента, затем отвечай пользовательскими терминами.',
     languageGuidance,
     moodGuidance,
   ].filter(Boolean).join(' ');

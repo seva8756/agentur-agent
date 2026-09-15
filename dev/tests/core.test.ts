@@ -26,11 +26,13 @@ import { skillResultText, textSkillResult } from '../../src/skills/result';
 import { skillPackageSchema, SkillPackage } from '../../src/skills/schema';
 import { runSkill, runSkillTool } from '../../src/skills/runtime';
 import { ToolRegistry } from '../../src/tools/registry';
+import { createBuiltinToolRegistry } from '../../src/tools/builtinTools';
 import { AgentTool, ToolContext, toOpenAITool } from '../../src/tools/types';
 import { createCronJobTool } from '../../src/tools/implementations/createCronJob';
 import { createSkillPackageDraftTool } from '../../src/tools/implementations/createSkillPackageDraft';
 import { createArtifactTool } from '../../src/tools/implementations/createArtifact';
 import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
+import { readAgentDocsTool } from '../../src/tools/implementations/readAgentDocs';
 import { createSendPayloadTool, sendPayloadTool } from '../../src/tools/implementations/sendPayload';
 import { runSkillToolTool } from '../../src/tools/implementations/runSkillTool';
 import { listSkillPackagesTool } from '../../src/tools/implementations/listSkillPackages';
@@ -476,7 +478,13 @@ describe('telegram formatting', () => {
     expect(media[0].caption).toContain('Файлы приложил.');
   });
 
-  it('sends markdown as Telegram rich markdown', async () => {
+  it.each([
+    '**важно**',
+    'Результат:\n\n| Email | userId | Статус |\n| --- | --- | --- |\n| user@example.com | 42 | Готово |',
+    'Имя | Статус\r\n:--- | ---:\r\nИван | Готово',
+    '| Имя |\n| --- |\n| Иван |',
+    '| A \\| B | C |\n| --- | --- |\n| x | y |',
+  ])('sends markdown as Telegram rich markdown: %s', async (text) => {
     const sendRichMessage = vi.fn(async (_chatId: string, _rich: unknown, _options?: unknown) => ({ message_id: 1, date: 1, chat: { id: -1001, type: 'supergroup' } }));
     const sendMessage = vi.fn();
     const bot = {
@@ -486,17 +494,27 @@ describe('telegram formatting', () => {
       },
     } as unknown as Bot;
 
-    await sendMarkdown(bot, '-1001', '**важно**', 42);
+    await sendMarkdown(bot, '-1001', text, 42);
 
     expect(sendRichMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).not.toHaveBeenCalled();
     const args = sendRichMessage.mock.calls[0];
     expect(args[0]).toBe('-1001');
-    expect(args[1]).toEqual({ markdown: '**важно**' });
+    expect(args[1]).toEqual({ markdown: text });
     expect(args[2]).toMatchObject({ message_thread_id: 42 });
   });
 
-  it('sends plain chat text without rich messages', async () => {
+  it.each([
+    'Ок, сделал.',
+    'Выбери A | B',
+    '| Имя | Статус |\n| Иван | Готово |',
+    '| Имя | Статус |\n\n| --- | --- |',
+    '| Имя | Статус |\n| --- |',
+    '| Имя | Статус |\n| --- | текст |',
+    '--- | ---',
+    '\n| --- | --- |',
+    '    | Имя | Статус |\n    | --- | --- |',
+  ])('sends plain chat text without rich messages: %s', async (text) => {
     const sendRichMessage = vi.fn();
     const sendMessage = vi.fn(async (_chatId: string, _text: string, _options?: unknown) => ({ message_id: 4, date: 1, chat: { id: -1001, type: 'supergroup' } }));
     const bot = {
@@ -506,11 +524,11 @@ describe('telegram formatting', () => {
       },
     } as unknown as Bot;
 
-    await sendMarkdown(bot, '-1001', 'Ок, сделал.', 42);
+    await sendMarkdown(bot, '-1001', text, 42);
 
     expect(sendRichMessage).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage.mock.calls[0][1]).toBe('Ок, сделал.');
+    expect(sendMessage.mock.calls[0][1]).toBe(text);
     expect(sendMessage.mock.calls[0][2]).toMatchObject({ message_thread_id: 42 });
     expect(sendMessage.mock.calls[0][2]).not.toHaveProperty('parse_mode');
   });
@@ -1083,6 +1101,22 @@ describe('artifacts', () => {
     expect(() => tool.schema.parse({ send })).toThrow();
     await tool.execute({ send: send.slice(0, 2) }, context);
     await expect(tool.execute({ send: [send[2]] }, context)).rejects.toThrow(/2/);
+  });
+});
+
+describe('agent docs', () => {
+  it('registers the documentation tool for model discovery', () => {
+    const tool = createBuiltinToolRegistry().get('read_agent_docs');
+    expect(tool?.description).toContain('why it did or did not respond');
+  });
+
+  it('loads concise user-facing capabilities and troubleshooting guidance', async () => {
+    const docs = await readAgentDocsTool.execute({}, { store: (await tempStore()).store, timezone: 'Europe/Moscow' });
+    expect(docs).toContain('/agentur help');
+    expect(docs).toContain('/agentur doctor');
+    expect(docs).toContain('smart');
+    expect(docs).toContain('Если что-то не работает');
+    expect(docs.length).toBeLessThanOrEqual(12_000);
   });
 });
 

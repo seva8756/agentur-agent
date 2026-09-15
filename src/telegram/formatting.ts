@@ -2,7 +2,27 @@ const TOKEN_PREFIX = '\uE000';
 const TOKEN_SUFFIX = '\uE001';
 
 export function hasTelegramRichMarkup(text: string): boolean {
-  return markdownToTelegramHtml(text).includes('<') || /^(#{1,6}|[-*+]|\d+\.)\s/m.test(text);
+  return markdownToTelegramHtml(text).includes('<') || /^(#{1,6}|[-*+]|\d+\.)\s/m.test(text) || hasMarkdownTable(text);
+}
+
+function hasMarkdownTable(text: string): boolean {
+  const lines = text.split(/\r?\n/);
+  const cells = (line: string): string[] => {
+    const parts = line.trim().split(/(?<!\\)\|/).map((part) => part.trim());
+    if (parts[0] === '') parts.shift();
+    if (parts[parts.length - 1] === '') parts.pop();
+    return parts;
+  };
+
+  return lines.some((line, index) => {
+    if (index === 0 || !/(?<!\\)\|/.test(line)) return false;
+    const header = lines[index - 1];
+    if (!header.trim() || /^( {4}|\t)/.test(header) || /^( {4}|\t)/.test(line)) return false;
+    const delimiters = cells(line);
+    return delimiters.length > 0
+      && delimiters.every((cell) => /^:?-+:?$/.test(cell))
+      && cells(header).length === delimiters.length;
+  });
 }
 
 export function markdownToTelegramHtml(text: string): string {
