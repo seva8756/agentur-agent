@@ -5,9 +5,9 @@ import { AgentTool } from '../types';
 
 const argsSchema = z.object({ name: z.string().min(1).optional(), id: z.string().min(1).optional() });
 
-export const enableMicroSkillTool: AgentTool<z.output<typeof argsSchema>> = {
-  name: 'enable_micro_skill',
-  description: TOOL_PROMPTS.enableMicroSkill.description,
+export const enableSkillTool: AgentTool<z.output<typeof argsSchema>> = {
+  name: 'enable_skill',
+  description: TOOL_PROMPTS.enableSkill.description,
   schema: argsSchema,
   execute: async (args, context) => {
     const name = args.name ?? args.id ?? '';

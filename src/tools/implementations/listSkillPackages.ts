@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { findSkill, loadDraftSkills, loadEnabledSkills } from '../../skills/loader';
+import { findSkill, loadSkills } from '../../skills/loader';
 import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
@@ -12,15 +12,14 @@ export const listSkillPackagesTool: AgentTool<z.output<typeof argsSchema>> = {
   description: TOOL_PROMPTS.listSkillPackages.description,
   schema: argsSchema,
   execute: async (args, context) => {
-    const [drafts, enabled] = await Promise.all([loadDraftSkills(context.store), loadEnabledSkills(context.store)]);
+    const skills = await loadSkills(context.store);
     if (args.name) {
-      const skill = findSkill([...enabled, ...drafts], args.name);
+      const skill = findSkill(skills, args.name);
       if (!skill) return JSON.stringify({ ok: false, error: `Skill not found: ${args.name}` });
       return JSON.stringify({ ok: true, skill });
     }
     return JSON.stringify({
-      drafts: drafts.map(lightweightSkill),
-      enabled: enabled.map(lightweightSkill),
+      skills: skills.map(lightweightSkill),
     });
   },
 };

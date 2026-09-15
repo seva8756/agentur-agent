@@ -13,27 +13,26 @@ Trusted skills исполняются native-кодом без QuickJS sandbox �
 Структура:
 
 ```text
-data/chats/<chat>/skills/drafts/<skill_id>/
+data/chats/<chat>/skills/custom/<skill_id>/
   skill.json
   SKILL.md
   plugin.js
-
-data/chats/<chat>/skills/enabled/<skill_id>/
-  skill.json
-  SKILL.md
-  plugin.js
+  revisions/
+    v1/
+      snapshot.json
+      SKILL.md
+      plugin.js
 ```
 
-`drafts` — черновики, которые агент может создавать и править.
-`enabled` — live-копии, которые реально исполняет runtime.
+`enabled` в `skill.json` — единственный флаг, определяющий, исполняет ли runtime skill. `revisions/v<version>/` содержит только одну сохранённую редакцию skill.
 
-Чтобы draft стал live:
+Новый skill создаётся выключенным. Чтобы включить его:
 
 ```text
 /agentur skill enable <skill_id>
 ```
 
-Enable делает validation/dry-run и копирует draft в enabled.
+Enable делает validation/dry-run и меняет `enabled` на `true`.
 
 ## skill.json
 
@@ -467,14 +466,13 @@ SKILL_HTTP_ALLOWED_ORIGINS=https://openrouter.ai
 
 ## Lifecycle
 
-1. Agent creates draft via `create_skill_package_draft`.
-2. User reviews files in `skills/drafts/<id>/`.
+1. Agent creates or updates a skill via `create_skill_package`.
+2. On update, the current `plugin.js`, `SKILL.md`, and runtime manifest fields are saved to `skills/custom/<id>/revisions/v<version>/`.
 3. User sets required secrets.
 4. User runs `/agentur skill enable <id>`.
-5. Enable validates and dry-runs the draft.
-6. Draft is copied to `skills/enabled/<id>/`.
-7. Runtime executes only enabled copy.
-8. Later draft edits require another `/agentur skill enable <id>` to go live.
+5. Enable validates and dry-runs the skill, then sets `enabled: true`.
+6. Runtime executes the package when `enabled` is true.
+7. If a recent update is broken, the agent can manually use `rollback_skill` to restore the one saved revision. The enabled flag, secrets, scoped state, and audit log are kept unchanged.
 
 ## Common Mistakes
 
@@ -484,7 +482,7 @@ SKILL_HTTP_ALLOWED_ORIGINS=https://openrouter.ai
 - Forgetting to declare `httpOrigins`.
 - Forgetting to allow origin in `SKILL_HTTP_ALLOWED_ORIGINS`.
 - Forgetting to declare secrets in `skill.json`.
-- Editing draft and expecting enabled copy to change automatically.
+- Updating a skill expecting more than one revision to be retained.
 - Returning a string instead of `{ reply: "..." }`.
 - Using `module.exports`; prefer `export default`.
 - Creating command triggers for broad/agentic skills instead of using `triggers: []` and `whenToUse`.

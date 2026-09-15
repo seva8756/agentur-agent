@@ -179,8 +179,7 @@ data/chats/<encoded-chat-id>/
 - `chat/identity.md` — стабильная identity агента в этом чате;
 - `chat/secrets.json` — chat-local secrets;
 - `chat/lists/*.json` — списки, которыми пользуются skills;
-- `skills/drafts/<id>/` — черновики skills;
-- `skills/enabled/<id>/` — включенные live skills;
+- `skills/custom/<id>/` — chat-generated skill package и его сохранённая ревизия;
 - `skills/state/<id>.json` — scoped storage конкретного skill;
 - `skills/audit/<id>.jsonl` — audit log запусков skill;
 - `cron/jobs.json` — cron drafts и enabled jobs.
@@ -190,27 +189,26 @@ data/chats/<encoded-chat-id>/
 Skill теперь является chat-local package:
 
 ```text
-skills/drafts/<id>/
+skills/custom/<id>/
   skill.json
   SKILL.md
   plugin.js
-
-skills/enabled/<id>/
-  skill.json
-  SKILL.md
-  plugin.js
+  revisions/
+    v1/
+      snapshot.json
+      SKILL.md
+      plugin.js
 ```
 
-`drafts` — черновик, который агент может писать и исправлять.
-`enabled` — live-копия, которую бот реально исполняет.
+`skill.json.enabled` определяет, исполняется ли skill. `revisions/v<version>/` содержит ровно одну сохранённую редакцию и перезаписывается при следующем обновлении.
 
-Изменение draft не меняет live-версию автоматически. Чтобы выкатить draft:
+Новый skill создаётся выключенным. Чтобы включить его:
 
 ```text
 /agentur skill enable <id>
 ```
 
-Enable делает validation/dry-run и копирует draft в enabled. Перезапуск бота для изменения `data/` не нужен, но изменения в `src/` требуют rebuild контейнера.
+Enable делает validation/dry-run. При обновлении skill агент сохраняет предыдущие `plugin.js`, `SKILL.md` и runtime-поля manifest; при критичной ошибке он может вручную откатить skill к этому снимку. Перезапуск бота для изменения `data/` не нужен, но изменения в `src/` требуют rebuild контейнера.
 
 Подробный гайд: [docs/skill-packages.md](docs/skill-packages.md).
 

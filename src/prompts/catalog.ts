@@ -23,7 +23,7 @@ export const TOOL_PROMPTS = {
     description:
       'Create a disabled cron reminder draft from natural language. Use ASCII id with cron_ prefix if possible; if unsure omit id. The action must be an object. Supported actions: send_static_message, ask_agent_and_send, run_skill_tool with skillId/toolName/args/text/sendResult. User enables it with /agentur cron enable <id>.',
   },
-  createSkillPackageDraft: {
+  createSkillPackage: {
     whenToUse: 'Required routing guidance: when the agent should use this skill, and when it should not. Be specific enough to avoid broad accidental activation.',
     skillMd: 'SKILL.md instructions for when and how to use this skill',
     pluginJs: 'Sandbox plugin.js. Export one object: { helper(){...}, tools:{ toolName(ctx,args){...} } }. Only tools.* are public; root helpers are private and called as this.helper(). Do not define helpers outside the exported object. Use ctx.api for SDK calls.',
@@ -31,7 +31,7 @@ export const TOOL_PROMPTS = {
     triggers: 'Default to [] for normal skills. Do not create Telegram slash commands unless the user explicitly asked to bind a slash command. Only explicit slash commands are supported, e.g. {type:"command",command:"/balance",tool:"check"}. Plain strings must start with /. Never use phrase, keyword, contains, or natural-language triggers.',
     secrets: 'Secret key names required by the package',
     description: [
-      'Create a disabled chat-local sandbox skill from natural language.',
+      'Create a disabled chat-local sandbox skill from natural language. If an id already exists, this updates it and stores its current version as the one retained rollback version.',
       'Generate SKILL.md instructions, skill.json metadata, and plugin.js with one or more tools.',
       'The skill runtime is always quickjs. The plugin tool signature is toolName(ctx, args). Use ctx.api.storage, ctx.api.lists, ctx.api.memory, ctx.api.http, ctx.api.artifacts, ctx.api.mcp, ctx.api.secrets, ctx.api.log, ctx.api.sleep.',
       'SDK contract: plugin.js must export/default one object expression: export default {helper(){...}, tools:{async name(ctx,args){this.helper(); ...}}}. The sandbox calls tools with this=exported object; only tools.* are public skill tools. SDK is only ctx.api, never a third api arg; HTTP returns {ok,status,text,json,url}; use ctx.api.http.get/post/put/patch/delete/request. Sync APIs: secrets/storage/log. Async APIs: http/lists/memory/artifacts/mcp/sleep.',
@@ -45,23 +45,27 @@ export const TOOL_PROMPTS = {
       'Do not invent convenience commands for skills. Do not create phrase/keyword/contains/message_contains triggers.',
       'For MCP/helper skills, prefer returning structured data/errors instead of raw JSON user-facing replies; let the LLM compose the final answer on semantic calls.',
       'HTTP origins and secrets must be declared explicitly.',
-      'The user must enable the draft manually with /agentur skill enable <id>.',
+      'The user must enable the skill manually with /agentur skill enable <id>.',
     ].join(' '),
   },
   deleteCronJob: {
     description: 'Permanently delete cron job by name. Name can be the stable file name/id or the visible title.',
   },
-  deleteMicroSkill: {
-    description: 'Permanently delete a micro-skill draft and enabled copy by name. Name can be the stable file name or the visible title.',
+  deleteSkill: {
+    description: 'Permanently delete a skill by name. Name can be the stable file name or the visible title.',
   },
   disableCronJob: {
     description: 'Disable cron job by name. Name can be the stable file name/id or the visible title.',
   },
-  disableMicroSkill: {
-    description: 'Disable an enabled micro-skill by name. Name can be the stable file name or the visible title.',
+  disableSkill: {
+    description: 'Disable a skill by name. Name can be the stable file name or the visible title.',
   },
-  enableMicroSkill: {
-    description: 'Enable an existing micro-skill draft by name. Name can be the stable file name or the visible title.',
+  enableSkill: {
+    description: 'Enable an existing skill by name. Name can be the stable file name or the visible title.',
+  },
+  rollbackSkill: {
+    description: 'Restore a skill from its one retained prior version. Use only when a recent skill update is broken; this preserves the skill enabled state and its runtime state.',
+    name: 'Skill name or ID to restore',
   },
   executeHttpQuery: {
     description: 'Execute an HTTP/HTTPS request to explore endpoints or fetch remote data. Strictly restricted from accessing local files or private network addresses.',
@@ -87,7 +91,7 @@ export const TOOL_PROMPTS = {
     description: 'List only available chat attachments and artifacts in a compact readable tree. Use it to orient yourself when the user refers to a supplied or generated file. It returns virtual paths; use grep_chat to search file contents or read_chat to inspect a listed metadata/content file.',
   },
   listSkillPackages: {
-    description: 'List draft and enabled skills. If name/id is provided, returns full skill details with pluginJs. Otherwise returns a lightweight list without pluginJs.',
+    description: 'List skills with their enabled status. If name/id is provided, returns full skill details with pluginJs. Otherwise returns a lightweight list without pluginJs.',
     name: 'Filter by skill name or ID to get full details including plugin.js',
   },
   readArtifact: {

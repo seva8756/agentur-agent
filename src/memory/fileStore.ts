@@ -100,8 +100,7 @@ export async function initializeDataDir(store: FileStore): Promise<void> {
   await Promise.all([
     store.ensureDir('chat', 'archive'),
     store.ensureDir('chat', 'lists'),
-    store.ensureDir('skills', 'drafts'),
-    store.ensureDir('skills', 'enabled'),
+    store.ensureDir('skills', 'custom'),
     store.ensureDir('artifacts'),
     store.ensureDir('integrations', 'mcp'),
     store.ensureDir('cron'),

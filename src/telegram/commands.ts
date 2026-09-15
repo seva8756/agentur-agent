@@ -22,7 +22,7 @@ import {
 import { IDENTITY_MAX_CHARS, IdentityTooLongError, readIdentity, resetIdentity, writeIdentity } from '../memory/identity';
 import { readMood, resetMood } from '../memory/moodDiary';
 import { AgentScheduler } from '../scheduler/scheduler';
-import { loadDraftSkills, loadEnabledSkills, enableSkill, disableSkill, deleteSkill, findSkill } from '../skills/loader';
+import { loadSkills, enableSkill, disableSkill, deleteSkill, findSkill } from '../skills/loader';
 import { skillSecrets } from '../skills/schema';
 
 export type CommandDeps = {
@@ -65,8 +65,7 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
     return decisions.length ? decisions.map((d) => `- ${d.text}`).join('\n') : 'Решений пока нет.';
   }
   if (command === 'secrets') {
-    const [drafts, enabled] = await Promise.all([loadDraftSkills(deps.store), loadEnabledSkills(deps.store)]);
-    const allSkills = [...drafts, ...enabled];
+    const allSkills = await loadSkills(deps.store);
     const allSecrets = await readSecrets(deps.store);
     
     // Собираем все уникальные требуемые секреты из всех зарегистрированных скиллов
@@ -107,19 +106,16 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
     return deleted ? `Секрет ${key} удалён.` : `Секрет ${key} не найден.`;
   }
   if (command === 'skills') {
-    const [drafts, enabled] = await Promise.all([loadDraftSkills(deps.store), loadEnabledSkills(deps.store)]);
-    return [
-      `Включены: ${enabled.length ? enabled.map((s) => s.id).join(', ') : 'нет'}`,
-      `Черновики: ${drafts.length ? drafts.map((s) => s.id).join(', ') : 'нет'}`,
-    ].join('\n');
+    const skills = await loadSkills(deps.store);
+    return skills.length
+      ? skills.map((skill) => `${skill.enabled ? 'on' : 'off'} ${skill.id}`).join('\n')
+      : 'Навыков пока нет.';
   }
   if (command === 'skill' && parts[2] === 'enable' && parts[3]) {
     const name = commandTail(parts, 3);
     try {
       // Ищем сам навык сначала, чтобы проверить требуемые секреты
-      const drafts = await loadDraftSkills(deps.store);
-      const enabled = await loadEnabledSkills(deps.store);
-      const targetSkill = findSkill([...drafts, ...enabled], name);
+      const targetSkill = findSkill(await loadSkills(deps.store), name);
       
       let warnings = '';
       const requiredSecrets = targetSkill ? skillSecrets(targetSkill) : [];

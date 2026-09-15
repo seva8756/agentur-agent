@@ -5,12 +5,13 @@ import { TrustedSkill } from '../skills/trustedTypes';
 import { trustedSkillToAgentTools } from '../skills/trustedRuntime';
 import { createCronJobTool } from './implementations/createCronJob';
 import { createArtifactTool } from './implementations/createArtifact';
-import { createSkillPackageDraftTool } from './implementations/createSkillPackageDraft';
+import { createSkillPackageTool } from './implementations/createSkillPackage';
 import { deleteCronJobTool } from './implementations/deleteCronJob';
-import { deleteMicroSkillTool } from './implementations/deleteMicroSkill';
+import { deleteSkillTool } from './implementations/deleteSkill';
 import { disableCronJobTool } from './implementations/disableCronJob';
-import { disableMicroSkillTool } from './implementations/disableMicroSkill';
-import { enableMicroSkillTool } from './implementations/enableMicroSkill';
+import { disableSkillTool } from './implementations/disableSkill';
+import { enableSkillTool } from './implementations/enableSkill';
+import { rollbackSkillTool } from './implementations/rollbackSkill';
 import { runSkillToolTool } from './implementations/runSkillTool';
 import { readArtifactTool } from './implementations/readArtifact';
 import { readAgentDocsTool } from './implementations/readAgentDocs';
@@ -38,12 +39,13 @@ export function createBuiltinToolRegistry(config?: AppConfig, trustedSkills: Tru
     readAgentDocsTool,
     readTrustedSkillInstructionsTool,
     createSendPayloadTool(config?.telegramSendMaxItems),
-    createSkillPackageDraftTool,
+    createSkillPackageTool,
     listSkillPackagesTool,
     runSkillToolTool,
-    enableMicroSkillTool,
-    disableMicroSkillTool,
-    deleteMicroSkillTool,
+    enableSkillTool,
+    rollbackSkillTool,
+    disableSkillTool,
+    deleteSkillTool,
     createCronJobTool,
     listCronJobsTool,
     disableCronJobTool,

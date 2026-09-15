@@ -1,10 +1,10 @@
 import { ChatMessage } from '../messaging/types';
-import { MicroSkill } from './schema';
+import { SkillPackage } from './schema';
 
 export type TemplateVars = Record<string, unknown>;
 
 export function buildTemplateVars(
-  skill: MicroSkill,
+  skill: SkillPackage,
   message: ChatMessage,
   extra: TemplateVars = {},
 ): TemplateVars {

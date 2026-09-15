@@ -33,6 +33,17 @@ export const skillPackageManifestSchema = z.object({
   createdAt: z.string(),
 });
 
+// These are the manifest fields that travel with a previous skill revision.
+// Identity and lifecycle fields deliberately remain owned by the live package.
+export const skillRollbackManifestSchema = skillPackageManifestSchema.pick({
+  title: true,
+  whenToUse: true,
+  runtime: true,
+  triggers: true,
+  tools: true,
+  permissions: true,
+});
+
 export const skillPackageSchema = skillPackageManifestSchema.extend({
   skillMd: z.string().default(''),
   pluginJs: z.string().min(1),
@@ -40,9 +51,8 @@ export const skillPackageSchema = skillPackageManifestSchema.extend({
 
 export type SkillTrigger = z.output<typeof triggerSchema>;
 export type SkillPackageManifest = z.output<typeof skillPackageManifestSchema>;
+export type SkillRollbackManifest = z.output<typeof skillRollbackManifestSchema>;
 export type SkillPackage = z.output<typeof skillPackageSchema>;
-export type MicroSkill = SkillPackage;
-
 export function skillSecrets(skill: SkillPackage): string[] {
   return skill.permissions.secrets;
 }

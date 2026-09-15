@@ -21,7 +21,7 @@ import { persistIncomingAttachments } from '../../src/memory/attachmentStore';
 import { AgentScheduler } from '../../src/scheduler/scheduler';
 import { runCronJob } from '../../src/scheduler/jobRuntime';
 import { cronJobSchema } from '../../src/scheduler/schema';
-import { enableSkill, disableSkill, saveDraftSkill, loadDraftSkills, loadEnabledSkills, deleteSkill } from '../../src/skills/loader';
+import { enableSkill, disableSkill, saveSkill, loadSkills, loadEnabledSkills, deleteSkill, rollbackSkill } from '../../src/skills/loader';
 import { matchSkill, matchesCommand } from '../../src/skills/matcher';
 import { skillResultText, textSkillResult } from '../../src/skills/result';
 import { skillPackageSchema, SkillPackage } from '../../src/skills/schema';
@@ -30,7 +30,7 @@ import { ToolRegistry } from '../../src/tools/registry';
 import { createBuiltinToolRegistry } from '../../src/tools/builtinTools';
 import { AgentTool, ToolContext, toOpenAITool } from '../../src/tools/types';
 import { createCronJobTool } from '../../src/tools/implementations/createCronJob';
-import { createSkillPackageDraftTool } from '../../src/tools/implementations/createSkillPackageDraft';
+import { createSkillPackageTool } from '../../src/tools/implementations/createSkillPackage';
 import { createArtifactTool } from '../../src/tools/implementations/createArtifact';
 import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
 import { grepChatTool } from '../../src/tools/implementations/grepChat';
@@ -157,7 +157,7 @@ describe('config', () => {
   });
 });
 
-const microSkillSchema = {
+const skillSchema = {
   parse(value: any): SkillPackage {
     if (value.pluginJs) return packageSkill(value);
     const toolName = 'main';
@@ -375,7 +375,7 @@ describe('single-chat filtering', () => {
 
   it('does not fall back to generic LLM reply when a matched skill returns no text', async () => {
     const { store, config, scheduler } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'silent_memory',
       title: 'Silent memory',
       enabled: false,
@@ -1046,9 +1046,9 @@ describe('context budget', () => {
     }]);
   });
 
-  it('includes enabled micro-skills for semantic tool selection', async () => {
+  it('includes enabled skills for semantic tool selection', async () => {
     const { store, config, scheduler } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'jsonbin_fetch',
       title: 'Fetch JSONBin data',
       whenToUse: 'Use when the user asks to fetch or show JSONBin data.',
@@ -1338,9 +1338,9 @@ describe('mood', () => {
   });
 });
 
-describe('micro-skills', () => {
+describe('skills', () => {
   it('validates schema', () => {
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'shopping_list',
       title: 'Shopping list',
       enabled: false,
@@ -1352,7 +1352,7 @@ describe('micro-skills', () => {
   });
 
   it('validates scripted skill schema', () => {
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'counter',
       title: 'Counter',
       enabled: false,
@@ -1366,7 +1366,7 @@ describe('micro-skills', () => {
   });
 
   it('matches slash commands against command triggers', () => {
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'jsonbin_fetch',
       title: 'Fetch JSONBin data',
       enabled: true,
@@ -1382,7 +1382,7 @@ describe('micro-skills', () => {
 
   it('enables and disables JSON skill', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'shopping_list',
       title: 'Shopping list',
       enabled: false,
@@ -1390,15 +1390,54 @@ describe('micro-skills', () => {
       action: { type: 'append_to_list', listName: 'shopping', itemExtractionHint: 'item after phrase' },
       createdAt: new Date().toISOString(),
     });
-    await saveDraftSkill(store, skill);
+    await saveSkill(store, skill);
     expect(await enableSkill(store, 'shopping_list')).not.toBeNull();
     expect(await loadEnabledSkills(store)).toHaveLength(1);
     expect(await disableSkill(store, 'shopping_list')).toBe(true);
   });
 
+  it('keeps one revision and restores it without changing enabled state', async () => {
+    const { store } = await tempStore();
+    const original = packageSkill({
+      id: 'weather',
+      title: 'Weather v1',
+      enabled: true,
+      whenToUse: 'Use for the current weather.',
+      skillMd: '# Weather v1',
+      pluginJs: 'export default { tools: { async current() { return { ok: true, reply: "v1" }; } } };',
+      tools: { current: { description: 'Get current weather', schema: { type: 'object', properties: {} } } },
+      permissions: { httpOrigins: ['https://weather.example'], storage: true, secrets: ['WEATHER_KEY'] },
+    });
+    await saveSkill(store, original);
+    await saveSkill(store, {
+      ...original,
+      title: 'Weather v2',
+      whenToUse: 'Use for the forecast.',
+      enabled: false,
+      skillMd: '# Weather v2',
+      pluginJs: 'export default { tools: { async forecast() { return { ok: true, reply: "v2" }; } } };',
+      tools: { forecast: { description: 'Get forecast', schema: { type: 'object', properties: {} } } },
+      permissions: { httpOrigins: [], storage: false, secrets: [] },
+    });
+
+    const restored = await rollbackSkill(store, 'weather');
+
+    expect(restored).toMatchObject({
+      title: 'Weather v1',
+      enabled: true,
+      version: 1,
+      skillMd: '# Weather v1',
+      tools: { current: { description: 'Get current weather' } },
+      permissions: { httpOrigins: ['https://weather.example'], storage: true, secrets: ['WEATHER_KEY'] },
+    });
+    expect(restored?.pluginJs).toContain('"v1"');
+    expect((await loadSkills(store))[0]).toMatchObject({ title: 'Weather v1', enabled: true, version: 1 });
+    expect(await fs.readFile(store.resolve('skills', 'custom', 'weather', 'revisions', 'v2', 'snapshot.json'), 'utf8')).toContain('Weather v2');
+  });
+
   it('deletes skill drafts and enabled copies', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'shopping_list',
       title: 'Shopping list',
       enabled: false,
@@ -1406,17 +1445,17 @@ describe('micro-skills', () => {
       action: { type: 'append_to_list', listName: 'shopping', itemExtractionHint: 'item after phrase' },
       createdAt: new Date().toISOString(),
     });
-    await saveDraftSkill(store, skill);
+    await saveSkill(store, skill);
     await enableSkill(store, 'shopping_list');
     expect(await deleteSkill(store, 'shopping_list')).toBe(true);
-    expect(await loadDraftSkills(store)).toHaveLength(0);
+    expect(await loadSkills(store)).toHaveLength(0);
     expect(await loadEnabledSkills(store)).toHaveLength(0);
     expect(await deleteSkill(store, 'shopping_list')).toBe(false);
   });
 
   it('resolves skill commands by visible title', async () => {
     const { store } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'shopping_list',
       title: 'Shopping List',
       enabled: false,
@@ -1431,9 +1470,9 @@ describe('micro-skills', () => {
     expect(await loadEnabledSkills(store)).toHaveLength(0);
   });
 
-  it('executes enabled micro-skill tool by visible title', async () => {
+  it('executes enabled skill tool by visible title', async () => {
     const { store } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'cat_image',
       title: 'Generate Cat Image',
       enabled: false,
@@ -1458,9 +1497,9 @@ describe('micro-skills', () => {
     });
   });
 
-  it('returns structured no-output result from micro-skill tool', async () => {
+  it('returns structured no-output result from skill tool', async () => {
     const { store } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'silent_check',
       title: 'Silent Check',
       enabled: false,
@@ -1485,9 +1524,9 @@ describe('micro-skills', () => {
     });
   });
 
-  it('returns media payload from micro-skill tool without queueing it automatically', async () => {
+  it('returns media payload from skill tool without queueing it automatically', async () => {
     const { store } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'photo_tool',
       title: 'Photo Tool',
       enabled: false,
@@ -1520,7 +1559,7 @@ describe('micro-skills', () => {
 
   it('runs scripted skill in sandbox with scoped storage', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'counter',
       title: 'Counter',
       enabled: true,
@@ -1540,7 +1579,7 @@ describe('micro-skills', () => {
 
   it('passes extracted ctx.item and stores scripted logs in audit', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'item_logger',
       title: 'Item Logger',
       enabled: true,
@@ -1564,7 +1603,7 @@ describe('micro-skills', () => {
 
   it('supports scripted media send results with public URLs', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'media_sender',
       title: 'Media Sender',
       enabled: true,
@@ -1594,7 +1633,7 @@ describe('micro-skills', () => {
 
   it('supports scripted artifact send results', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'html_sender',
       title: 'HTML Sender',
       enabled: true,
@@ -1657,7 +1696,7 @@ describe('micro-skills', () => {
 
   it('rejects scripted media send results with non-public URLs', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'unsafe_media_sender',
       title: 'Unsafe Media Sender',
       enabled: true,
@@ -1674,7 +1713,7 @@ describe('micro-skills', () => {
 
   it('lets scripted skills delete scoped storage keys', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'storage_delete',
       title: 'Storage Delete',
       enabled: true,
@@ -1712,7 +1751,7 @@ describe('micro-skills', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
-      const skill = microSkillSchema.parse({
+      const skill = skillSchema.parse({
         id: 'scripted_http_patch',
         title: 'Scripted HTTP PATCH',
         enabled: true,
@@ -1749,7 +1788,7 @@ describe('micro-skills', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     try {
-      const skill = microSkillSchema.parse({
+      const skill = skillSchema.parse({
         id: 'scripted_oversized_http_body',
         title: 'Scripted Oversized HTTP Body',
         enabled: true,
@@ -1777,7 +1816,7 @@ describe('micro-skills', () => {
 
   it('does not enable scripted skill that fails static validation', async () => {
     const { store } = await tempStore();
-    await saveDraftSkill(store, microSkillSchema.parse({
+    await saveSkill(store, skillSchema.parse({
       id: 'bad_script',
       title: 'Bad Script',
       enabled: false,
@@ -1793,7 +1832,7 @@ describe('micro-skills', () => {
 
   it('creates skill drafts through tool', async () => {
     const { store } = await tempStore();
-    const result = await createSkillPackageDraftTool.execute(
+    const result = await createSkillPackageTool.execute(
       {
         title: 'Echo Script',
         whenToUse: 'Use when the user asks to echo text.',
@@ -1807,15 +1846,15 @@ describe('micro-skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Создан черновик навыка');
-    const drafts = await loadDraftSkills(store);
-    expect(drafts).toHaveLength(1);
-    expect(drafts[0]?.whenToUse).toBe('Use when the user asks to echo text.');
+    expect(result).toContain('Создан навык');
+    const skills = await loadSkills(store);
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.whenToUse).toBe('Use when the user asks to echo text.');
   });
 
   it('keeps skill drafts semantic-only by default and mentions optional command binding', async () => {
     const { store } = await tempStore();
-    const result = await createSkillPackageDraftTool.execute(
+    const result = await createSkillPackageTool.execute(
       {
         title: 'Semantic Echo',
         whenToUse: 'Use when the user asks to echo text.',
@@ -1831,13 +1870,13 @@ describe('micro-skills', () => {
     );
     expect(result).toContain('Триггеры: semantic only');
     expect(result).toContain('Если нужна отдельная Telegram-команда');
-    const drafts = await loadDraftSkills(store);
-    expect(drafts[0]?.triggers).toEqual([]);
+    const skills = await loadSkills(store);
+    expect(skills[0]?.triggers).toEqual([]);
   });
 
   it('normalizes explicit slash string triggers as commands when creating one-tool skill drafts', async () => {
     const { store } = await tempStore();
-    const result = await createSkillPackageDraftTool.execute(
+    const result = await createSkillPackageTool.execute(
       {
         title: 'Balance Check',
         whenToUse: 'Use when the user asks for balance.',
@@ -1851,9 +1890,9 @@ describe('micro-skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Создан черновик навыка');
-    const [draft] = await loadDraftSkills(store);
-    expect(draft?.triggers).toEqual([
+    expect(result).toContain('Создан навык');
+    const [skill] = await loadSkills(store);
+    expect(skill?.triggers).toEqual([
       { type: 'command', command: 'balance', tool: 'check' },
       { type: 'command', command: 'баланс', tool: 'check' },
     ]);
@@ -1861,7 +1900,7 @@ describe('micro-skills', () => {
 
   it('rejects non-slash plain string triggers', async () => {
     const { store } = await tempStore();
-    await expect(createSkillPackageDraftTool.execute(
+    await expect(createSkillPackageTool.execute(
       {
         title: 'Balance Check',
         whenToUse: 'Use when the user asks for balance.',
@@ -1896,7 +1935,7 @@ describe('micro-skills', () => {
 
   it('normalizes loose trigger objects when creating one-tool skill drafts', async () => {
     const { store } = await tempStore();
-    const result = await createSkillPackageDraftTool.execute(
+    const result = await createSkillPackageTool.execute(
       {
         title: 'Loose Trigger',
         whenToUse: 'Use when the user asks for a loose trigger test.',
@@ -1910,9 +1949,9 @@ describe('micro-skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Создан черновик навыка');
-    const [draft] = await loadDraftSkills(store);
-    expect(draft?.triggers).toEqual([{ type: 'command', command: 'inspect', tool: 'inspect' }]);
+    expect(result).toContain('Создан навык');
+    const [skill] = await loadSkills(store);
+    expect(skill?.triggers).toEqual([{ type: 'command', command: 'inspect', tool: 'inspect' }]);
   });
 
   it('normalizes short scripted skill errors', async () => {
@@ -1927,11 +1966,11 @@ describe('micro-skills', () => {
     expect(reply?.error).toEqual({ code: 'skill_error', message: 'missing token' });
   });
 
-  it('lists micro-skills in lightweight format by default and full format by name', async () => {
+  it('lists skills in lightweight format by default and full format by name', async () => {
     const { store } = await tempStore();
     
-    // Создаем скриптовый навык в черновиках
-    await saveDraftSkill(store, microSkillSchema.parse({
+    // Создаем выключенный скриптовый навык
+    await saveSkill(store, skillSchema.parse({
       id: 'test_script_skill',
       title: 'Test Script',
       enabled: false,
@@ -1946,10 +1985,10 @@ describe('micro-skills', () => {
     const listResult = await listSkillPackagesTool.execute({}, { store, timezone: 'UTC' });
     const parsedList = JSON.parse(listResult);
     
-    expect(parsedList.drafts).toHaveLength(1);
-    expect(parsedList.drafts[0].id).toBe('test_script_skill');
-    expect(parsedList.drafts[0].pluginJs).toBeUndefined();
-    expect(parsedList.drafts[0].hasPluginJs).toBe(true);
+    expect(parsedList.skills).toHaveLength(1);
+    expect(parsedList.skills[0].id).toBe('test_script_skill');
+    expect(parsedList.skills[0].pluginJs).toBeUndefined();
+    expect(parsedList.skills[0].hasPluginJs).toBe(true);
 
     // 2. Проверяем вызов с указанием конкретного имени
     const detailsResult = await listSkillPackagesTool.execute({ name: 'Test Script' }, { store, timezone: 'UTC' });
@@ -1983,7 +2022,7 @@ describe('cron schema', () => {
     })).toThrow();
   });
 
-  it('supports cron actions that run enabled micro-skills', async () => {
+  it('supports cron actions that run enabled skills', async () => {
     const sent: Array<{ text: string; threadId?: number | null }> = [];
     const toolThreads: Array<number | null | undefined> = [];
     await runCronJob(
@@ -2041,7 +2080,7 @@ describe('cron schema', () => {
     expect(sent).toEqual([{ text: 'agent reply', threadId: 42 }]);
   });
 
-  it('keeps cron silent when micro-skill has no reply', async () => {
+  it('keeps cron silent when skill has no reply', async () => {
     const sent: string[] = [];
     await runCronJob(
       cronJobSchema.parse({
@@ -2367,7 +2406,7 @@ describe('tool loop', () => {
 
 describe('tool schemas', () => {
   it('exposes nested package fields as objects for OpenAI tool calling', () => {
-    const skillSchema = toOpenAITool(createSkillPackageDraftTool).function.parameters as any;
+    const skillSchema = toOpenAITool(createSkillPackageTool).function.parameters as any;
     expect(skillSchema.properties.triggers.items.anyOf[0].type).toBe('object');
     expect(skillSchema.properties.triggers.items.anyOf[1].type).toBe('string');
     expect(skillSchema.properties.tools.additionalProperties.type).toBe('object');
@@ -2407,7 +2446,7 @@ describe('tool schemas', () => {
 
   it('runs template and blocks non-allowlisted HTTP actions', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'webhook_test',
       title: 'Webhook test',
       enabled: true,
@@ -2443,7 +2482,7 @@ describe('tool schemas', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
-      const skill = microSkillSchema.parse({
+      const skill = skillSchema.parse({
         id: 'wildcard_http_test',
         title: 'Wildcard HTTP test',
         enabled: true,
@@ -2474,7 +2513,7 @@ describe('tool schemas', () => {
 
   it('blocks oversized HTTP request bodies before sending', async () => {
     const { store } = await tempStore();
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'oversized_http_body_test',
       title: 'Oversized HTTP body test',
       enabled: true,
@@ -2653,7 +2692,7 @@ describe('secrets system', () => {
     await setSecret(store, 'GITHUB_TOKEN', 'token_123');
     await setSecret(store, 'OTHER_KEY', 'other_123');
 
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'webhook_secrets_test',
       title: 'Secrets test',
       enabled: true,
@@ -2679,7 +2718,7 @@ describe('secrets system', () => {
     await setSecret(store, 'GITHUB_TOKEN', 'token_123');
     await setSecret(store, 'OTHER_KEY', 'other_123');
 
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'script_secrets_test',
       title: 'Script secrets test',
       enabled: true,
@@ -2705,7 +2744,7 @@ describe('secrets system', () => {
     const { handleAgentCommand } = await import('../../src/telegram/commands');
     
     // Создаем черновик навыка, запрашивающего MY_SECRET
-    const skill = microSkillSchema.parse({
+    const skill = skillSchema.parse({
       id: 'warn_skill',
       title: 'Warn Skill',
       enabled: false,
@@ -2714,7 +2753,7 @@ describe('secrets system', () => {
       action: { type: 'reply_static', text: 'hi' },
       createdAt: new Date().toISOString(),
     });
-    await saveDraftSkill(store, skill);
+    await saveSkill(store, skill);
 
     // Включаем без заполненного секрета -> должно быть предупреждение
     const resultNoSecret = await handleAgentCommand('/agentur skill enable warn_skill', {
