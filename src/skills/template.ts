@@ -1,4 +1,4 @@
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { MicroSkill } from './schema';
 
 export type TemplateVars = Record<string, unknown>;

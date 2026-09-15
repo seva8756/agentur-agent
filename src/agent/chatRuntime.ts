@@ -9,7 +9,7 @@ import { loadEnabledSkills } from '../skills/loader';
 import { SkillRunResult, textSkillResult } from '../skills/result';
 import { runSkillTool } from '../skills/runtime';
 import { TrustedSkillPromptInfo } from '../skills/trustedTypes';
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { ToolRegistry } from '../tools/registry';
 import { generateAgentReply } from './respond';
 
@@ -32,11 +32,11 @@ export class ChatRuntimeManager {
   ) {}
 
   isChatAllowed(chatId: string): boolean {
-    return this.config.telegramAllowedChatIds.length === 0 || this.config.telegramAllowedChatIds.includes(chatId);
+    return this.config.chatAllowedIds.length === 0 || this.config.chatAllowedIds.includes(chatId);
   }
 
   isFullCaptureChat(chatId: string): boolean {
-    return this.config.telegramFullCaptureChatIds.includes('*') || this.config.telegramFullCaptureChatIds.includes(chatId);
+    return this.config.chatFullCaptureIds.includes('*') || this.config.chatFullCaptureIds.includes(chatId);
   }
 
   async getRuntime(chatId: string): Promise<ChatRuntime | null> {
@@ -61,6 +61,8 @@ export class ChatRuntimeManager {
             scheduler: runtime.scheduler,
             timezone: this.config.agentTimezone,
             httpAllowedOrigins: this.config.skillHttpAllowedOrigins,
+            httpBlockedHosts: this.config.httpBlockedHosts,
+            httpAllowedPrivateHosts: this.config.httpAllowedPrivateHosts,
             httpTimeoutMs: this.config.skillHttpTimeoutMs,
             httpMaxRequestBytes: this.config.skillHttpMaxRequestBytes,
             httpMaxResponseBytes: this.config.skillHttpMaxResponseBytes,
@@ -90,6 +92,8 @@ export class ChatRuntimeManager {
           },
           {
             httpAllowedOrigins: this.config.skillHttpAllowedOrigins,
+            httpBlockedHosts: this.config.httpBlockedHosts,
+            httpAllowedPrivateHosts: this.config.httpAllowedPrivateHosts,
             httpTimeoutMs: this.config.skillHttpTimeoutMs,
             httpMaxRequestBytes: this.config.skillHttpMaxRequestBytes,
             httpMaxResponseBytes: this.config.skillHttpMaxResponseBytes,
@@ -109,8 +113,8 @@ export class ChatRuntimeManager {
   }
 
   async loadKnownRuntimes(): Promise<void> {
-    if (this.config.telegramAllowedChatIds.length > 0) {
-      await Promise.all(this.config.telegramAllowedChatIds.map((chatId) => this.getRuntime(chatId)));
+    if (this.config.chatAllowedIds.length > 0) {
+      await Promise.all(this.config.chatAllowedIds.map((chatId) => this.getRuntime(chatId)));
     }
 
     const chatsDir = path.join(this.config.agentDataDir, 'chats');
@@ -133,6 +137,7 @@ export class ChatRuntimeManager {
 
 function buildCronMessage(chatId: string, text: string, threadId?: number | null): ChatMessage {
   return {
+    provider: 'scheduler',
     messageId: Date.now(),
     chatId,
     threadId: threadId ?? undefined,

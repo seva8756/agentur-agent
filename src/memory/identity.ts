@@ -1,6 +1,6 @@
 import { FileStore } from './fileStore';
 
-export const IDENTITY_MAX_CHARS = 7500;
+export const IDENTITY_MAX_CHARS = 20000;
 const identityPath = ['chat', 'identity.md'];
 
 export class IdentityTooLongError extends Error {

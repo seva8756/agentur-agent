@@ -1,4 +1,4 @@
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { SkillPackage } from './schema';
 
 export type SkillMatch = {

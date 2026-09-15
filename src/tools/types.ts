@@ -4,7 +4,7 @@ import { FileStore } from '../memory/fileStore';
 import { AgentScheduler } from '../scheduler/scheduler';
 import type { McpManager } from '../integrations/mcp/manager';
 import type { TrustedSkillPromptInfo } from '../skills/trustedTypes';
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import type { SkillRunResult } from '../skills/result';
 
 export type ToolContext = {
@@ -12,6 +12,8 @@ export type ToolContext = {
   scheduler?: AgentScheduler;
   timezone: string;
   httpAllowedOrigins?: string[];
+  httpBlockedHosts?: string[];
+  httpAllowedPrivateHosts?: string[];
   httpTimeoutMs?: number;
   httpMaxRequestBytes?: number;
   httpMaxResponseBytes?: number;

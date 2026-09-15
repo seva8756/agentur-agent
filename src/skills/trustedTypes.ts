@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { AppConfig } from '../config';
 import type { FileStore } from '../memory/fileStore';
-import type { ChatMessage } from '../telegram/telegramTypes';
+import type { ChatMessage } from '../messaging/types';
 import type { McpManager, McpServerInfo, McpToolInfo } from '../integrations/mcp/manager';
 import type { SkillRunResult } from './result';
 

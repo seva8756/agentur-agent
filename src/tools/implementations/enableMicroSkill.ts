@@ -14,6 +14,8 @@ export const enableMicroSkillTool: AgentTool<z.output<typeof argsSchema>> = {
     try {
       return (await enableSkill(context.store, name, {
         httpAllowedOrigins: context.httpAllowedOrigins ?? [],
+        httpBlockedHosts: context.httpBlockedHosts ?? [],
+        httpAllowedPrivateHosts: context.httpAllowedPrivateHosts ?? [],
         httpTimeoutMs: context.httpTimeoutMs ?? 10000,
         httpMaxRequestBytes: context.httpMaxRequestBytes ?? 131072,
         httpMaxResponseBytes: context.httpMaxResponseBytes ?? 1048576,

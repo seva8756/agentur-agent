@@ -28,6 +28,8 @@ export const executeHttpQueryTool: AgentTool<z.output<typeof argsSchema>> = {
         },
         {
           allowedOrigins: context.httpAllowedOrigins ?? [],
+          blockedHosts: context.httpBlockedHosts,
+          allowedPrivateHosts: context.httpAllowedPrivateHosts,
           timeoutMs: context.httpTimeoutMs ?? 10000,
           maxRequestBytes: context.httpMaxRequestBytes ?? 131072,
           maxResponseBytes: context.httpMaxResponseBytes ?? 1048576,

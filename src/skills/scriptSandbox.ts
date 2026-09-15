@@ -5,7 +5,7 @@ import { saveDecision } from '../memory/decisions';
 import { FileStore } from '../memory/fileStore';
 import { rememberFact } from '../memory/facts';
 import { readSecrets } from '../memory/secrets';
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { safeHttpRequest } from '../tools/safeHttp';
 import { logger } from '../utils/logger';
 import { normalizeSkillRunResultInput, SkillRunResult, skillRunResultSchema, textSkillResult } from './result';
@@ -15,10 +15,10 @@ import { SkillPackage } from './schema';
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 const SCRIPT_MEMORY_BYTES = 8 * 1024 * 1024;
 const SCRIPT_MAX_STACK_BYTES = 512 * 1024;
-const SCRIPT_MAX_OUTPUT_BYTES = 10000;
-const SCRIPT_MAX_STATE_BYTES = 65536;
-const SCRIPT_MAX_HTTP_CALLS = 8;
-const SCRIPT_MAX_MCP_CALLS = 8;
+const SCRIPT_MAX_OUTPUT_BYTES = 3145728;
+const SCRIPT_MAX_STATE_BYTES = 1048576;
+const SCRIPT_MAX_HTTP_CALLS = 16;
+const SCRIPT_MAX_MCP_CALLS = 24;
 const SCRIPT_MAX_SLEEP_MS = 1000;
 const SCRIPT_MAX_LOGS = 32;
 const SCRIPT_MAX_LOG_BYTES = 500;
@@ -139,6 +139,8 @@ async function executeQuickJs(
           },
           {
             allowedOrigins: effectiveOrigins,
+            blockedHosts: options.httpBlockedHosts,
+            allowedPrivateHosts: options.httpAllowedPrivateHosts,
             timeoutMs: options.httpTimeoutMs,
             maxRequestBytes: options.httpMaxRequestBytes,
             maxResponseBytes: options.httpMaxResponseBytes,

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { providerChatId } from './messaging/chatAddress';
 import { TELEGRAM_SEND_MAX_ITEMS_LIMIT } from './telegram/sendLimits';
 import { validateTimeZone } from './utils/time';
 
@@ -54,6 +55,8 @@ const envSchema = z.object({
   MOOD_UPDATE_EVERY_MESSAGES: z.coerce.number().int().positive().default(20),
   INTERACTION_SUMMARY_EVERY_MESSAGES: z.coerce.number().int().positive().default(50),
   SKILL_HTTP_ALLOWED_ORIGINS: commaList.default(''),
+  HTTP_BLOCKED_HOSTS: commaList.default(''),
+  HTTP_ALLOWED_PRIVATE_HOSTS: commaList.default(''),
   SKILL_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   SKILL_HTTP_MAX_REQUEST_BYTES: z.coerce.number().int().positive().default(131072),
   SKILL_HTTP_MAX_RESPONSE_BYTES: z.coerce.number().int().positive().default(1048576),
@@ -71,12 +74,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     throw new Error(`Invalid configuration: ${details}`);
   }
   const v = parsed.data;
+  const chatAllowedIds = telegramChatIds(v.TELEGRAM_ALLOWED_CHAT_ID);
+  const chatFullCaptureIds = telegramChatIds(v.TELEGRAM_FULL_CAPTURE_CHAT_IDS);
   return {
     telegramBotToken: v.TELEGRAM_BOT_TOKEN,
-    telegramAllowedChatIds: v.TELEGRAM_ALLOWED_CHAT_ID,
+    chatAllowedIds,
+    telegramAllowedChatIds: chatAllowedIds,
     telegramBotUsername: v.TELEGRAM_BOT_USERNAME,
-    telegramMultiChat: v.TELEGRAM_ALLOWED_CHAT_ID.length !== 1,
-    telegramFullCaptureChatIds: v.TELEGRAM_FULL_CAPTURE_CHAT_IDS,
+    chatMultiChat: chatAllowedIds.length !== 1,
+    telegramMultiChat: chatAllowedIds.length !== 1,
+    chatFullCaptureIds,
+    telegramFullCaptureChatIds: chatFullCaptureIds,
     llmBaseUrl: v.LLM_BASE_URL,
     llmApiKey: v.LLM_API_KEY,
     llmModel: v.LLM_MODEL,
@@ -98,6 +106,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     moodUpdateEveryMessages: v.MOOD_UPDATE_EVERY_MESSAGES,
     interactionSummaryEveryMessages: v.INTERACTION_SUMMARY_EVERY_MESSAGES,
     skillHttpAllowedOrigins: v.SKILL_HTTP_ALLOWED_ORIGINS,
+    httpBlockedHosts: v.HTTP_BLOCKED_HOSTS,
+    httpAllowedPrivateHosts: v.HTTP_ALLOWED_PRIVATE_HOSTS,
     skillHttpTimeoutMs: v.SKILL_HTTP_TIMEOUT_MS,
     skillHttpMaxRequestBytes: v.SKILL_HTTP_MAX_REQUEST_BYTES,
     skillHttpMaxResponseBytes: v.SKILL_HTTP_MAX_RESPONSE_BYTES,
@@ -105,4 +115,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     mcpTimeoutMs: v.MCP_TIMEOUT_MS,
     mcpMaxResponseBytes: v.MCP_MAX_RESPONSE_BYTES,
   };
+}
+
+function telegramChatIds(ids: string[]): string[] {
+  return ids.map((id) => id === '*' ? id : providerChatId('telegram', id));
 }

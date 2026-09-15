@@ -41,8 +41,8 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
   if (command === 'help') return helpText();
   if (command === 'status') {
     const settings = await readChatSettings(deps.store);
-    const capture = deps.config.telegramFullCaptureChatIds.length
-      ? deps.config.telegramFullCaptureChatIds.join(', ')
+    const capture = deps.config.chatFullCaptureIds.length
+      ? deps.config.chatFullCaptureIds.join(', ')
       : 'только обращения, навыки и команды';
     return `Работаю.\nРежим ответа: ${settings.replyMode}.\nРежим цензуры: ${formatCensorMode(isCensorModeEnabled(settings))}.\nСбор контекста: ${capture}.\nTool Calling: ${deps.config.llmSupportsTools ? 'включен' : 'выключен'}.`;
   }
@@ -134,6 +134,8 @@ export async function handleAgentCommand(text: string, deps: CommandDeps): Promi
 
       const skill = await enableSkill(deps.store, name, {
         httpAllowedOrigins: deps.config.skillHttpAllowedOrigins,
+        httpBlockedHosts: deps.config.httpBlockedHosts,
+        httpAllowedPrivateHosts: deps.config.httpAllowedPrivateHosts,
         httpTimeoutMs: deps.config.skillHttpTimeoutMs,
         httpMaxRequestBytes: deps.config.skillHttpMaxRequestBytes,
         httpMaxResponseBytes: deps.config.skillHttpMaxResponseBytes,

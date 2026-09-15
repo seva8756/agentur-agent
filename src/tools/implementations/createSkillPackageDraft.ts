@@ -32,7 +32,7 @@ export const createSkillPackageDraftTool: AgentTool<z.output<typeof argsSchema>>
   schema: argsSchema,
   execute: async (args, context) => {
     const skill = skillPackageSchema.parse({
-      id: toAsciiSlug(args.id ?? args.title, 'skill'),
+      id: toAsciiSlug(args.id ?? args.title, `skill_${crypto.randomUUID().slice(0, 8)}`),
       title: args.title,
       whenToUse: args.whenToUse,
       enabled: false,

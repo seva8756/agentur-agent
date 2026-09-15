@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+data
+coverage
+.git
+.idea
+.DS_Store
+graphify-out

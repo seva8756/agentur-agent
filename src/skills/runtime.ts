@@ -1,5 +1,5 @@
 import { FileStore } from '../memory/fileStore';
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { McpManager } from '../integrations/mcp/manager';
 import { SkillRunResult } from './result';
 import { runPackageTool } from './scriptSandbox';
@@ -7,6 +7,8 @@ import { SkillPackage } from './schema';
 
 export type SkillRuntimeOptions = {
   httpAllowedOrigins: string[];
+  httpBlockedHosts: string[];
+  httpAllowedPrivateHosts: string[];
   httpTimeoutMs: number;
   httpMaxRequestBytes: number;
   httpMaxResponseBytes: number;
@@ -17,6 +19,8 @@ export type SkillRuntimeOptions = {
 
 const defaultOptions: SkillRuntimeOptions = {
   httpAllowedOrigins: [],
+  httpBlockedHosts: [],
+  httpAllowedPrivateHosts: [],
   httpTimeoutMs: 10000,
   httpMaxRequestBytes: 131072,
   httpMaxResponseBytes: 1048576,

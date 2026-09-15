@@ -35,12 +35,27 @@ import { createSendPayloadTool, sendPayloadTool } from '../../src/tools/implemen
 import { runSkillToolTool } from '../../src/tools/implementations/runSkillTool';
 import { listSkillPackagesTool } from '../../src/tools/implementations/listSkillPackages';
 import { buildContextPolicy } from '../../src/agent/context/policy';
-import { routeMessage } from '../../src/telegram/messageRouter';
-import { handleAgentCommand } from '../../src/telegram/commands';
+import { routeMessage } from '../../src/messaging/messageRouter';
+import { handleAgentCommand } from '../../src/messaging/commands';
 import { hasTelegramRichMarkup, markdownToTelegramHtml } from '../../src/telegram/formatting';
 import { sendMarkdown, sendSkillResult, truncateForTelegram } from '../../src/telegram/send';
-import { ChatMessage } from '../../src/telegram/telegramTypes';
+import { ChatMessage } from '../../src/messaging/types';
+import { nativeChatId, providerChatId } from '../../src/messaging/chatAddress';
 import { formatLocalTime } from '../../src/utils/time';
+
+const TELEGRAM_CHAT_ID = providerChatId('telegram', '-1001');
+const TELEGRAM_CHAT_ID_2 = providerChatId('telegram', '-1002');
+const TELEGRAM_DENIED_CHAT_ID = providerChatId('telegram', '-1003');
+
+describe('chat addresses', () => {
+  it('restores a native provider chat ID for provider API calls', () => {
+    expect(nativeChatId('telegram', TELEGRAM_CHAT_ID)).toBe('-1001');
+  });
+
+  it('rejects an ID from another provider', () => {
+    expect(() => nativeChatId('telegram', providerChatId('discord', '42'))).toThrow('does not belong to telegram');
+  });
+});
 
 function testConfig(dataDir: string): AppConfig {
   return loadConfig({
@@ -75,7 +90,7 @@ async function tempStore(): Promise<{ dir: string; store: FileStore; config: App
 function msg(partial: Partial<ChatMessage> = {}): ChatMessage {
   return {
     messageId: 1,
-    chatId: '-1001',
+    chatId: TELEGRAM_CHAT_ID,
     fromId: 'u1',
     text: 'hello',
     date: new Date(),
@@ -111,6 +126,18 @@ describe('config', () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiny-agent-config-'));
     const config = testConfig(dir);
     expect(config.telegramSendMaxItems).toBe(10);
+    expect(config.chatAllowedIds).toEqual([TELEGRAM_CHAT_ID]);
+    const httpConfig = loadConfig({
+      TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHI',
+      TELEGRAM_ALLOWED_CHAT_ID: '-1001',
+      LLM_API_KEY: 'sk-test',
+      LLM_MODEL: 'test-model',
+      AGENT_DATA_DIR: dir,
+      HTTP_BLOCKED_HOSTS: 'api.example.com, Staging.example.com',
+      HTTP_ALLOWED_PRIVATE_HOSTS: 'localhost, api.internal',
+    });
+    expect(httpConfig.httpBlockedHosts).toEqual(['api.example.com', 'Staging.example.com']);
+    expect(httpConfig.httpAllowedPrivateHosts).toEqual(['localhost', 'api.internal']);
     expect(() => loadConfig({
       TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHI',
       TELEGRAM_ALLOWED_CHAT_ID: '-1001',
@@ -199,7 +226,7 @@ function pluginForAction(action: any, secrets: string[]): string {
 describe('single-chat filtering', () => {
   it('ignores and does not store messages from other chats', async () => {
     const { store, config, scheduler } = await tempStore();
-    const reply = await routeMessage(msg({ chatId: '-999', text: '@agentbot ping' }), {
+    const reply = await routeMessage(msg({ chatId: providerChatId('telegram', '-999'), text: '@agentbot ping' }), {
       config,
       botUsername: 'agentbot',
       store,
@@ -230,8 +257,8 @@ describe('single-chat filtering', () => {
       new ToolRegistry(),
       async () => undefined,
     );
-    const first = await manager.getRuntime('-1001');
-    const second = await manager.getRuntime('-1002');
+    const first = await manager.getRuntime(TELEGRAM_CHAT_ID);
+    const second = await manager.getRuntime(TELEGRAM_CHAT_ID_2);
     expect(first?.store.rootDir).not.toEqual(second?.store.rootDir);
     await first?.store.writeJson({ value: 1 }, 'chat', 'marker.json');
     await expect(fs.access(second!.store.resolve('chat', 'marker.json'))).rejects.toThrow();
@@ -256,15 +283,15 @@ describe('single-chat filtering', () => {
       async () => undefined,
     );
 
-    const first = await manager.getRuntime('-1001');
-    const second = await manager.getRuntime('-1002');
-    const denied = await manager.getRuntime('-1003');
+    const first = await manager.getRuntime(TELEGRAM_CHAT_ID);
+    const second = await manager.getRuntime(TELEGRAM_CHAT_ID_2);
+    const denied = await manager.getRuntime(TELEGRAM_DENIED_CHAT_ID);
 
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
     expect(denied).toBeNull();
     expect(first?.store.rootDir).not.toEqual(second?.store.rootDir);
-    const deniedDir = path.join(dir, 'chats', Buffer.from('-1003', 'utf8').toString('base64url'));
+    const deniedDir = path.join(dir, 'chats', Buffer.from(TELEGRAM_DENIED_CHAT_ID, 'utf8').toString('base64url'));
     await expect(fs.access(deniedDir)).rejects.toThrow();
   });
 
@@ -284,7 +311,7 @@ describe('single-chat filtering', () => {
 
   it('stores silent background messages for full-capture chats', async () => {
     const { store, config, scheduler } = await tempStore();
-    const captureConfig = { ...config, telegramFullCaptureChatIds: ['-1001'] };
+    const captureConfig = { ...config, chatFullCaptureIds: [TELEGRAM_CHAT_ID] };
     const reply = await routeMessage(msg({ text: 'просто фоновая переписка' }), {
       config: captureConfig,
       botUsername: 'agentbot',
@@ -615,7 +642,7 @@ describe('context budget', () => {
     const { store } = await tempStore();
     await appendRecentMessage(store, {
       id: 1,
-      chatId: '-1001',
+      chatId: TELEGRAM_CHAT_ID,
       userId: '42',
       username: 'seva',
       displayName: 'Сева',
@@ -637,7 +664,7 @@ describe('context budget', () => {
     const { store } = await tempStore();
     await appendRecentMessage(store, {
       id: 1,
-      chatId: '-1001',
+      chatId: TELEGRAM_CHAT_ID,
       text: 'Готово, приложил CSV.',
       date: new Date().toISOString(),
       isBot: true,
@@ -663,7 +690,7 @@ describe('context budget', () => {
     const { store } = await tempStore();
     await appendRecentMessage(store, {
       id: 1,
-      chatId: '-1001',
+      chatId: TELEGRAM_CHAT_ID,
       userId: '42',
       username: 'seva',
       displayName: 'Сева',
@@ -689,7 +716,7 @@ describe('context budget', () => {
     await store.writeJson([{ id: 'decision_1', text: 'важное решение', createdAt: new Date().toISOString() }], 'chat', 'decisions.json');
     await appendRecentMessage(store, {
       id: 1,
-      chatId: '-1001',
+      chatId: TELEGRAM_CHAT_ID,
       userId: '42',
       username: 'seva',
       displayName: 'Сева',
@@ -2299,6 +2326,44 @@ describe('execute_http_query tool', () => {
       { store, timezone: 'UTC', httpAllowedOrigins: ['*'] }
     );
     expect(resultLoopbackIp).toContain('forbidden');
+  });
+
+  it('blocks hosts configured in HTTP_BLOCKED_HOSTS', async () => {
+    const { store } = await tempStore();
+    const { executeHttpQueryTool } = await import('../../src/tools/implementations/executeHttpQuery');
+    const result = await executeHttpQueryTool.execute(
+      { url: 'https://staging.example.com/health', method: 'GET' },
+      { store, timezone: 'UTC', httpAllowedOrigins: ['*'], httpBlockedHosts: ['api.example.com', 'Staging.example.com'] },
+    );
+    expect(result).toContain('forbidden');
+  });
+
+  it('blocks private networks unless the hostname is explicitly allowed', async () => {
+    const { store } = await tempStore();
+    const { executeHttpQueryTool } = await import('../../src/tools/implementations/executeHttpQuery');
+    const blocked = await executeHttpQueryTool.execute(
+      { url: 'http://192.168.1.10/health', method: 'GET' },
+      { store, timezone: 'UTC', httpAllowedOrigins: ['*'] },
+    );
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('ok')));
+    let allowed: string;
+    let blockedByPriority: string;
+    try {
+      allowed = await executeHttpQueryTool.execute(
+        { url: 'http://localhost/health', method: 'GET' },
+        { store, timezone: 'UTC', httpAllowedOrigins: ['*'], httpAllowedPrivateHosts: ['localhost'] },
+      );
+      blockedByPriority = await executeHttpQueryTool.execute(
+        { url: 'http://localhost/health', method: 'GET' },
+        { store, timezone: 'UTC', httpAllowedOrigins: ['*'], httpBlockedHosts: ['localhost'], httpAllowedPrivateHosts: ['localhost'] },
+      );
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+    expect(blocked).toContain('forbidden');
+    expect(JSON.parse(allowed!).status).toBe(200);
+    expect(blockedByPriority!).toContain('forbidden');
   });
 
   it('blocks queries to origins that are not allowed', async () => {

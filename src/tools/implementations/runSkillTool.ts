@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { findSkill, loadEnabledSkills } from '../../skills/loader';
 import { skillResultText } from '../../skills/result';
 import { runSkillTool } from '../../skills/runtime';
-import { ChatMessage } from '../../telegram/telegramTypes';
+import { ChatMessage } from '../../messaging/types';
 import { TOOL_PROMPTS } from '../../prompts/catalog';
 import { AgentTool } from '../types';
 
@@ -24,6 +24,8 @@ export const runSkillToolTool: AgentTool<z.output<typeof argsSchema>> = {
     const message = buildSkillMessage(context.currentMessage, args.input);
     const result = await runSkillTool(context.store, skill, args.toolName, args.args, message, {
       httpAllowedOrigins: context.httpAllowedOrigins ?? [],
+      httpBlockedHosts: context.httpBlockedHosts ?? [],
+      httpAllowedPrivateHosts: context.httpAllowedPrivateHosts ?? [],
       httpTimeoutMs: context.httpTimeoutMs ?? 10000,
       httpMaxRequestBytes: context.httpMaxRequestBytes ?? 131072,
       httpMaxResponseBytes: context.httpMaxResponseBytes ?? 1048576,

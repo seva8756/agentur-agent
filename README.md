@@ -289,6 +289,8 @@ HTTP из skills и agent-facing `execute_http_query` идет через общ
 - origin должен быть объявлен в `skill.json`;
 - origin должен быть разрешен глобально в `SKILL_HTTP_ALLOWED_ORIGINS`;
 - localhost/private IP блокируются;
+- хосты из `HTTP_BLOCKED_HOSTS` блокируются;
+- private/localhost хосты из `HTTP_ALLOWED_PRIVATE_HOSTS` явно разрешаются;
 - redirects проверяются на каждом шаге;
 - есть timeout, request body limit и response body limit.
 
@@ -296,12 +298,18 @@ HTTP из skills и agent-facing `execute_http_query` идет через общ
 
 ```env
 SKILL_HTTP_ALLOWED_ORIGINS=
+HTTP_BLOCKED_HOSTS=
+HTTP_ALLOWED_PRIVATE_HOSTS=
 SKILL_HTTP_TIMEOUT_MS=10000
 SKILL_HTTP_MAX_REQUEST_BYTES=131072
 SKILL_HTTP_MAX_RESPONSE_BYTES=1048576
 ```
 
 `SKILL_HTTP_ALLOWED_ORIGINS=*` разрешает любые публичные origins, но проверки localhost/private IP и лимитов остаются.
+
+`HTTP_BLOCKED_HOSTS` — дополнительный список запрещенных хостов через запятую, например `HTTP_BLOCKED_HOSTS=api.example.com,staging.example.com`. Сопоставление идет по имени хоста без порта и без учета регистра.
+
+`HTTP_ALLOWED_PRIVATE_HOSTS` позволяет обратиться к точно указанному private/localhost хосту, например `HTTP_ALLOWED_PRIVATE_HOSTS=localhost,api.internal`. Используйте только для доверенной инфраструктуры; `HTTP_BLOCKED_HOSTS` имеет приоритет.
 
 ## Trusted MCP Skill And Chat MCP Servers
 

@@ -1,4 +1,4 @@
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 
 export type ReplyDecision = {
   shouldReply: boolean;

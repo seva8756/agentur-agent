@@ -11,6 +11,8 @@ export type SafeHttpRequest = {
 
 export type SafeHttpOptions = {
   allowedOrigins: string[];
+  blockedHosts?: string[];
+  allowedPrivateHosts?: string[];
   timeoutMs: number;
   maxRequestBytes: number;
   maxResponseBytes: number;
@@ -32,27 +34,24 @@ export function isOriginAllowed(origin: string, allowedOrigins: string[]): boole
   return allowedOrigins.includes('*') || allowedOrigins.includes(origin);
 }
 
-export function isPrivateIp(ip: string): boolean {
-  if (net.isIPv4(ip)) {
-    const parts = ip.split('.').map(Number);
-    if (parts.length !== 4) return true;
-    if (parts[0] === 127) return true;
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    if (ip === '0.0.0.0') return true;
-    return false;
-  }
-  if (net.isIPv6(ip)) {
-    const normalized = ip.toLowerCase().replace(/^\[|\]$/g, '');
-    if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') return true;
-    if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
-    if (normalized === '::' || normalized === '0:0:0:0:0:0:0:0') return true;
-    return false;
-  }
-  return false;
+const privateIpBlockList = new net.BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
+  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16],
+] as const) privateIpBlockList.addSubnet(address, prefix, 'ipv4');
+for (const [address, prefix] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10]] as const) {
+  privateIpBlockList.addSubnet(address, prefix, 'ipv6');
 }
 
-export async function isSafeHost(hostname: string): Promise<boolean> {
+export function isPrivateIp(ip: string): boolean {
+  const family = net.isIP(ip);
+  return family > 0 && privateIpBlockList.check(ip, family === 4 ? 'ipv4' : 'ipv6');
+}
+
+export async function isSafeHost(hostname: string, options: Pick<SafeHttpOptions, 'blockedHosts' | 'allowedPrivateHosts'> = {}): Promise<boolean> {
   const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (includesHost(options.blockedHosts, normalized)) return false;
+  if (includesHost(options.allowedPrivateHosts, normalized)) return true;
   if (normalized === 'localhost' || normalized.endsWith('.localhost')) return false;
   if (net.isIP(normalized)) return !isPrivateIp(normalized);
   try {
@@ -61,6 +60,10 @@ export async function isSafeHost(hostname: string): Promise<boolean> {
   } catch {
     return true;
   }
+}
+
+function includesHost(hosts: string[] | undefined, hostname: string): boolean {
+  return hosts?.some((host) => host.trim().toLowerCase().replace(/^\[|\]$/g, '') === hostname) ?? false;
 }
 
 export async function safeHttpRequest(request: SafeHttpRequest, options: SafeHttpOptions): Promise<SafeHttpResponse> {
@@ -81,10 +84,10 @@ export async function safeHttpRequest(request: SafeHttpRequest, options: SafeHtt
     let response: Response;
     while (true) {
       const parsed = parseAllowedUrl(currentUrl);
-      const safe = await isSafeHost(parsed.hostname);
+      const safe = await isSafeHost(parsed.hostname, options);
       if (!safe) {
-        logger.warn('Blocked HTTP request to local or private host', { hostname: parsed.hostname, url: currentUrl });
-        throw new SafeHttpError('unsafe_host', `Access to local or private host '${parsed.hostname}' is forbidden`);
+        logger.warn('Blocked HTTP request to blocked, local, or private host', { hostname: parsed.hostname, url: currentUrl });
+        throw new SafeHttpError('unsafe_host', `Access to blocked, local, or private host '${parsed.hostname}' is forbidden`);
       }
       if (!isOriginAllowed(parsed.origin, options.allowedOrigins)) {
         logger.warn('Blocked HTTP request to non-allowed origin', { origin: parsed.origin, url: currentUrl });

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { FileStore } from '../memory/fileStore';
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { formatLogError, logger } from '../utils/logger';
 import { skillResultText } from './result';
 import { runSkillTool, SkillRuntimeOptions } from './runtime';

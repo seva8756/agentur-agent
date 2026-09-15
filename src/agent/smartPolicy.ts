@@ -4,7 +4,7 @@ import { FileStore } from '../memory/fileStore';
 import { readMood } from '../memory/moodDiary';
 import { formatRecentMessageForContext, readRecentMessages, selectRecentForContext } from '../memory/recentMessages';
 import { buildSmartReplySystemPrompt, buildSmartReplyUserPrompt } from '../prompts/catalog';
-import { ChatMessage } from '../telegram/telegramTypes';
+import { ChatMessage } from '../messaging/types';
 import { logger } from '../utils/logger';
 
 const SMART_REPLY_RECENT_MESSAGE_MAX_CHARS = 500;

@@ -1,24 +1,48 @@
 import { Bot, Context } from 'grammy';
 import { AppConfig } from '../config';
 import { ChatRuntimeManager } from '../agent/chatRuntime';
-import { decideReply } from '../agent/replyPolicy';
 import { isLlmContextLengthError } from '../llm/errors';
+import { FileStore } from '../memory/fileStore';
 import { appendRecentMessage, readRecentMessages } from '../memory/recentMessages';
 import type { RecentAttachment } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
 import { IDENTITY_MAX_CHARS, IdentityTooLongError, writeIdentity } from '../memory/identity';
+import { ChatAdapter } from '../messaging/adapter';
+import { nativeChatId, providerChatId } from '../messaging/chatAddress';
 import { ConversationQueue } from '../messaging/conversationQueue';
+import { routeMessage } from '../messaging/messageRouter';
+import { ChatMessage } from '../messaging/types';
 import { buildPhotoDownloadFailureUserPrompt } from '../prompts/catalog';
+import { SkillRunResult } from '../skills/result';
 import { logger } from '../utils/logger';
-import { routeMessage } from './messageRouter';
-import { replyMarkdown, replySkillResult } from './send';
-import { ChatMessage } from './telegramTypes';
+import { replyMarkdown, replySkillResult, sendSkillResult } from './send';
 
 type TelegramBotParams = {
   config: AppConfig;
   runtimeManager: ChatRuntimeManager;
   messageQueue: ConversationQueue;
 };
+
+export async function createTelegramAdapter(params: TelegramBotParams): Promise<ChatAdapter> {
+  const { bot, botUsername } = await createTelegramBot(params);
+  return {
+    id: 'telegram',
+    botUsername,
+    sendTyping: async (chatId, threadId) => {
+      await bot.api.sendChatAction(nativeChatId('telegram', chatId), 'typing', threadOptions(threadId)).catch((error) =>
+        logger.debug('Could not send Telegram typing action', error),
+      );
+    },
+    sendResult: async (chatId: string, store: FileStore, result: SkillRunResult, threadId?: number | null) => {
+      const telegramId = nativeChatId('telegram', chatId);
+      await bot.api.sendChatAction(telegramId, 'typing', threadOptions(threadId)).catch((error) =>
+        logger.debug('Could not send Telegram typing action', error),
+      );
+      await sendSkillResult(bot, store, telegramId, result, threadId, params.config.telegramSendMaxItems);
+    },
+    start: () => bot.start(),
+  };
+}
 
 export async function createTelegramBot(params: TelegramBotParams): Promise<{ bot: Bot; botUsername: string }> {
   const bot = new Bot(params.config.telegramBotToken);
@@ -27,7 +51,7 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
 
   bot.use((ctx, next) => {
     if (!ctx.chat) return next();
-    void params.messageQueue.enqueue(String(ctx.chat.id), next).catch((error) => {
+    void params.messageQueue.enqueue(telegramChatId(ctx.chat.id), next).catch((error) => {
       logger.error('Could not process Telegram update', error);
     });
   });
@@ -69,7 +93,7 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
       await handleIncomingChatMessage(ctx, message, botUsername, params);
       return;
     }
-    const runtime = await params.runtimeManager.getRuntime(String(ctx.message.chat.id));
+    const runtime = await params.runtimeManager.getRuntime(telegramChatId(ctx.message.chat.id));
     if (!runtime) return;
     await ctx.api.sendChatAction(ctx.message.chat.id, 'typing', threadOptions(ctx.message.message_thread_id)).catch((error) =>
       logger.debug('Could not send typing action', error),
@@ -115,9 +139,13 @@ async function handleIncomingChatMessage(
 ): Promise<void> {
   const runtime = await params.runtimeManager.getRuntime(message.chatId);
   if (!runtime) return;
-  const stopTyping = shouldShowTyping(message, botUsername)
-    ? startTypingHeartbeat(ctx, message.chatId, message.threadId)
-    : () => undefined;
+  let stopTyping: () => void = () => undefined;
+  let typingStarted = false;
+  const startTyping = () => {
+    if (typingStarted || !ctx.chat) return;
+    typingStarted = true;
+    stopTyping = startTypingHeartbeat(ctx, String(ctx.chat.id), message.threadId);
+  };
 
   let reply: Awaited<ReturnType<typeof routeMessage>>;
   try {
@@ -130,6 +158,7 @@ async function handleIncomingChatMessage(
       trustedSkills: params.runtimeManager.trustedSkills,
       mcp: params.runtimeManager.mcp,
       scheduler: runtime.scheduler,
+      onReplyExpected: startTyping,
     });
   } catch (error) {
     logger.error('Could not create Telegram reply', error);
@@ -233,10 +262,6 @@ function mimeTypeFromPath(filePath: string): string {
   return 'image/jpeg';
 }
 
-function shouldShowTyping(message: ChatMessage, botUsername: string): boolean {
-  return decideReply(message, botUsername, false).shouldReply;
-}
-
 function startTypingHeartbeat(ctx: Context, chatId: string, threadId: number | undefined): () => void {
   let stopped = false;
   const sendTyping = async () => {
@@ -273,8 +298,9 @@ function toChatMessage(ctx: Context, botUsername: string): ChatMessage | null {
     return { text: rawText.trim(), authorName };
   })();
   return {
+    provider: 'telegram',
     messageId: message.message_id,
-    chatId: String(message.chat.id),
+    chatId: telegramChatId(message.chat.id),
     threadId: message.message_thread_id,
     chatType: message.chat.type,
     fromId: from ? String(from.id) : undefined,
@@ -311,8 +337,9 @@ async function toPhotoChatMessage(
   const replyFrom = message.reply_to_message?.from;
   const caption = message.caption?.trim();
   return {
+    provider: 'telegram',
     messageId: message.message_id,
-    chatId: String(message.chat.id),
+    chatId: telegramChatId(message.chat.id),
     threadId: message.message_thread_id,
     chatType: message.chat.type,
     fromId: from ? String(from.id) : undefined,
@@ -340,8 +367,9 @@ function toDocumentChatMessage(ctx: Context, botUsername: string): ChatMessage |
   const filename = message.document.file_name;
   const label = filename ? `[файл: ${filename}]` : '[файл]';
   return {
+    provider: 'telegram',
     messageId: message.message_id,
-    chatId: String(message.chat.id),
+    chatId: telegramChatId(message.chat.id),
     threadId: message.message_thread_id,
     chatType: message.chat.type,
     fromId: from ? String(from.id) : undefined,
@@ -371,8 +399,9 @@ function toPhotoFallbackChatMessage(
   const replyFrom = message.reply_to_message?.from;
   const caption = message.caption?.trim();
   return {
+    provider: 'telegram',
     messageId: message.message_id,
-    chatId: String(message.chat.id),
+    chatId: telegramChatId(message.chat.id),
     threadId: message.message_thread_id,
     chatType: message.chat.type,
     fromId: from ? String(from.id) : undefined,
@@ -388,8 +417,12 @@ function toPhotoFallbackChatMessage(
   };
 }
 
-function threadOptions(threadId: number | undefined): { message_thread_id?: number } | undefined {
+function threadOptions(threadId: number | null | undefined): { message_thread_id?: number } | undefined {
   return threadId ? { message_thread_id: threadId } : undefined;
+}
+
+function telegramChatId(chatId: string | number): string {
+  return providerChatId('telegram', String(chatId));
 }
 
 function humanErrorReason(error: unknown): string {
