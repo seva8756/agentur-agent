@@ -89,6 +89,10 @@ export const TOOL_PROMPTS = {
       'Do not use it for ordinary domain questions unrelated to the agent itself.',
     ].join(' '),
   },
+  readTrustedSkillInstructions: {
+    description: 'Read the full SKILL.md instructions for an enabled trusted native skill by its inventory id. Use when you need to know how to use that trusted skill; this does not run its tools.',
+    skillId: 'Exact trusted_skill id from the enabled skill inventory, for example mcp',
+  },
   rememberFact: {
     description: 'Save a stable fact about the chat, users, preferences, or project.',
   },

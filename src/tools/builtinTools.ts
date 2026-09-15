@@ -14,6 +14,7 @@ import { enableMicroSkillTool } from './implementations/enableMicroSkill';
 import { runSkillToolTool } from './implementations/runSkillTool';
 import { readArtifactTool } from './implementations/readArtifact';
 import { readAgentDocsTool } from './implementations/readAgentDocs';
+import { readTrustedSkillInstructionsTool } from './implementations/readTrustedSkillInstructions';
 import { createSendPayloadTool } from './implementations/sendPayload';
 import { listCronJobsTool } from './implementations/listCronJobs';
 import { listSkillPackagesTool } from './implementations/listSkillPackages';
@@ -29,6 +30,7 @@ export function createBuiltinToolRegistry(config?: AppConfig, trustedSkills: Tru
     createArtifactTool,
     readArtifactTool,
     readAgentDocsTool,
+    readTrustedSkillInstructionsTool,
     createSendPayloadTool(config?.telegramSendMaxItems),
     createSkillPackageDraftTool,
     listSkillPackagesTool,

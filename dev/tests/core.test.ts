@@ -33,6 +33,7 @@ import { createSkillPackageDraftTool } from '../../src/tools/implementations/cre
 import { createArtifactTool } from '../../src/tools/implementations/createArtifact';
 import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
 import { readAgentDocsTool } from '../../src/tools/implementations/readAgentDocs';
+import { readTrustedSkillInstructionsTool } from '../../src/tools/implementations/readTrustedSkillInstructions';
 import { createSendPayloadTool, sendPayloadTool } from '../../src/tools/implementations/sendPayload';
 import { runSkillToolTool } from '../../src/tools/implementations/runSkillTool';
 import { listSkillPackagesTool } from '../../src/tools/implementations/listSkillPackages';
@@ -1117,6 +1118,40 @@ describe('agent docs', () => {
     expect(docs).toContain('smart');
     expect(docs).toContain('Если что-то не работает');
     expect(docs.length).toBeLessThanOrEqual(12_000);
+  });
+});
+
+describe('trusted skill instructions', () => {
+  it('registers a read-only tool for loaded trusted skills', () => {
+    const tool = createBuiltinToolRegistry().get('read_trusted_skill_instructions');
+    expect(tool?.description).toContain('SKILL.md');
+  });
+
+  it('returns instructions only for an enabled trusted skill by exact id', async () => {
+    const { store } = await tempStore();
+    const context: ToolContext = {
+      store,
+      timezone: 'Europe/Moscow',
+      trustedSkills: [{
+        manifest: {
+          id: 'mcp', title: 'MCP', enabled: true, runtime: 'native', source: 'system',
+          version: 1, triggers: [], tools: {}, createdAt: '2026-06-03T00:00:00.000Z',
+        },
+        skillMd: 'Use MCP tools for connected services.',
+      }, {
+        manifest: {
+          id: 'disabled', title: 'Disabled', enabled: false, runtime: 'native', source: 'system',
+          version: 1, triggers: [], tools: {}, createdAt: '2026-06-03T00:00:00.000Z',
+        },
+        skillMd: 'Should not be exposed.',
+      }],
+    };
+    expect(JSON.parse(await readTrustedSkillInstructionsTool.execute({ skillId: 'mcp' }, context))).toEqual({
+      ok: true, skillId: 'mcp', instructions: 'Use MCP tools for connected services.',
+    });
+    expect(JSON.parse(await readTrustedSkillInstructionsTool.execute({ skillId: 'disabled' }, context)).ok).toBe(false);
+    expect(JSON.parse(await readTrustedSkillInstructionsTool.execute({ skillId: 'missing' }, context)).ok).toBe(false);
+    expect(() => readTrustedSkillInstructionsTool.schema.parse({ skillId: '../mcp' })).toThrow();
   });
 });
 
