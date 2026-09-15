@@ -57,7 +57,7 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
   });
 
   bot.on('message:text', async (ctx) => {
-    const message = toChatMessage(ctx, botUsername);
+    const message = await toChatMessage(ctx, botUsername, params.config, bot);
     if (!message) return;
 
     // Если это команда установки секрета, ПЫТАЕМСЯ удалить сообщение пользователя в группе
@@ -77,7 +77,7 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
       await handleIncomingChatMessage(ctx, message, botUsername, params);
     } catch (error) {
       logger.warn('Could not process Telegram photo', error);
-      const fallback = toPhotoFallbackChatMessage(ctx, botUsername, humanErrorReason(error));
+      const fallback = await toPhotoFallbackChatMessage(ctx, botUsername, params.config, bot, humanErrorReason(error));
       if (!fallback) {
         await replyMarkdown(ctx, 'Не смог обработать картинку.', ctx.message.message_id, ctx.message.message_thread_id);
         return;
@@ -88,7 +88,7 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
   bot.on('message:document', async (ctx) => {
     const caption = ctx.message.caption?.trim() ?? '';
     if (!/^\/agentur(?:@\w+)?\s+identity\s+set\b/i.test(caption)) {
-      const message = toDocumentChatMessage(ctx, botUsername);
+      const message = await toDocumentChatMessage(ctx, botUsername, params.config, bot);
       if (!message) return;
       await handleIncomingChatMessage(ctx, message, botUsername, params);
       return;
@@ -229,13 +229,23 @@ async function downloadTelegramTextFile(
   maxBytes: number,
   bot: Bot,
 ): Promise<string> {
+  const { bytes } = await downloadTelegramFile(botToken, fileId, maxBytes, bot);
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+async function downloadTelegramFile(
+  botToken: string,
+  fileId: string,
+  maxBytes: number,
+  bot: Bot,
+): Promise<{ filePath: string; bytes: Uint8Array }> {
   const file = await bot.api.getFile(fileId);
   if (!file.file_path) throw new Error('Telegram file_path is empty');
   const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
   if (!response.ok) throw new Error(`Telegram file download failed: ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) throw new Error('Telegram file exceeds identity byte limit');
-  return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  if (bytes.byteLength > maxBytes) throw new Error('Telegram file exceeds byte limit');
+  return { filePath: file.file_path, bytes };
 }
 
 async function downloadTelegramImageDataUrl(
@@ -243,16 +253,11 @@ async function downloadTelegramImageDataUrl(
   fileId: string,
   maxBytes: number,
   bot: Bot,
-): Promise<{ dataUrl: string; mimeType: string; sizeBytes: number }> {
-  const file = await bot.api.getFile(fileId);
-  if (!file.file_path) throw new Error('Telegram file_path is empty');
-  const mimeType = mimeTypeFromPath(file.file_path);
-  const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
-  if (!response.ok) throw new Error(`Telegram image download failed: ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) throw new Error('Telegram image exceeds byte limit');
+): Promise<{ dataUrl: string; mimeType: string; sizeBytes: number; bytes: Uint8Array }> {
+  const { filePath, bytes } = await downloadTelegramFile(botToken, fileId, maxBytes, bot);
+  const mimeType = mimeTypeFromPath(filePath);
   const base64 = Buffer.from(bytes).toString('base64');
-  return { dataUrl: `data:${mimeType};base64,${base64}`, mimeType, sizeBytes: bytes.byteLength };
+  return { dataUrl: `data:${mimeType};base64,${base64}`, mimeType, sizeBytes: bytes.byteLength, bytes };
 }
 
 function mimeTypeFromPath(filePath: string): string {
@@ -278,25 +283,12 @@ function startTypingHeartbeat(ctx: Context, chatId: string, threadId: number | u
   };
 }
 
-function toChatMessage(ctx: Context, botUsername: string): ChatMessage | null {
+async function toChatMessage(ctx: Context, botUsername: string, config: AppConfig, bot: Bot): Promise<ChatMessage | null> {
   const message = ctx.message;
   if (!message || !('text' in message) || !message.text) return null;
   const from = message.from;
   const replyFrom = message.reply_to_message?.from;
-  const replyMsg = message.reply_to_message;
-  const quotedMessage = (() => {
-    if (!replyMsg) return undefined;
-    const rawText = ('text' in replyMsg && typeof replyMsg.text === 'string')
-      ? replyMsg.text
-      : ('caption' in replyMsg && typeof replyMsg.caption === 'string')
-        ? replyMsg.caption
-        : undefined;
-    if (!rawText?.trim()) return undefined;
-    const authorName = replyMsg.from
-      ? ([replyMsg.from.first_name, replyMsg.from.last_name].filter(Boolean).join(' ') || replyMsg.from.username)
-      : undefined;
-    return { text: rawText.trim(), authorName };
-  })();
+  const replyContext = await buildReplyContext(message, config, bot);
   return {
     provider: 'telegram',
     messageId: message.message_id,
@@ -309,7 +301,7 @@ function toChatMessage(ctx: Context, botUsername: string): ChatMessage | null {
     text: message.text,
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
-    quotedMessage,
+    ...replyContext,
     entities: message.entities,
   };
 }
@@ -327,15 +319,21 @@ async function toPhotoChatMessage(
   if (photo.file_size && photo.file_size > config.telegramImageMaxBytes) {
     throw new Error(`Telegram photo exceeds byte limit: ${photo.file_size}`);
   }
-  const image = await downloadTelegramImageDataUrl(
+  const downloadedImage = await downloadTelegramImageDataUrl(
     config.telegramBotToken,
     photo.file_id,
     config.telegramImageMaxBytes,
     bot,
   );
+  const image = {
+    dataUrl: downloadedImage.dataUrl,
+    mimeType: downloadedImage.mimeType,
+    sizeBytes: downloadedImage.sizeBytes,
+  };
   const from = message.from;
   const replyFrom = message.reply_to_message?.from;
   const caption = message.caption?.trim();
+  const replyContext = await buildReplyContext(message, config, bot);
   return {
     provider: 'telegram',
     messageId: message.message_id,
@@ -351,14 +349,21 @@ async function toPhotoChatMessage(
       kind: 'photo',
       mimeType: image.mimeType,
       sizeBytes: image.sizeBytes,
+      originalBytes: downloadedImage.bytes,
     }],
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
+    ...replyContext,
     entities: message.caption_entities,
   };
 }
 
-function toDocumentChatMessage(ctx: Context, botUsername: string): ChatMessage | null {
+async function toDocumentChatMessage(
+  ctx: Context,
+  botUsername: string,
+  config: AppConfig,
+  bot: Bot,
+): Promise<ChatMessage | null> {
   const message = ctx.message;
   if (!message || !('document' in message) || !message.document) return null;
   const from = message.from;
@@ -366,6 +371,22 @@ function toDocumentChatMessage(ctx: Context, botUsername: string): ChatMessage |
   const caption = message.caption?.trim();
   const filename = message.document.file_name;
   const label = filename ? `[файл: ${filename}]` : '[файл]';
+  let extractedText: string | undefined;
+  let extractedTextTruncated = false;
+  let originalBytes: Uint8Array | undefined;
+  const replyContext = await buildReplyContext(message, config, bot);
+  if (!message.document.file_size || message.document.file_size <= config.telegramAttachmentMaxBytes) {
+    try {
+      const downloaded = await downloadTelegramFile(config.telegramBotToken, message.document.file_id, config.telegramAttachmentMaxBytes, bot);
+      originalBytes = downloaded.bytes;
+      if (isTextReadableAttachment(filename, message.document.mime_type)) {
+        extractedText = new TextDecoder('utf-8', { fatal: false }).decode(downloaded.bytes);
+        extractedTextTruncated = extractedText.length > 60_000;
+      }
+    } catch (error) {
+      logger.warn('Could not download Telegram attachment', error);
+    }
+  }
   return {
     provider: 'telegram',
     messageId: message.message_id,
@@ -381,23 +402,40 @@ function toDocumentChatMessage(ctx: Context, botUsername: string): ChatMessage |
       filename,
       mimeType: message.document.mime_type,
       sizeBytes: message.document.file_size,
+      extractedText,
+      extractedTextTruncated,
+      originalBytes,
     }],
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
+    ...replyContext,
     entities: message.caption_entities,
   };
 }
 
-function toPhotoFallbackChatMessage(
+function isTextReadableAttachment(fileName: string | undefined, mimeType: string | undefined): boolean {
+  const name = fileName?.toLowerCase() ?? '';
+  const textMime = mimeType?.toLowerCase() ?? '';
+  return textMime.startsWith('text/')
+    || ['application/json', 'application/xml', 'application/javascript', 'application/typescript'].includes(textMime)
+    || textMime.endsWith('+json')
+    || textMime.endsWith('+xml')
+    || /\.(txt|md|csv|tsv|json|jsonl|xml|yaml|yml|log|js|ts|py|java|go|rs|sql|html|css)$/i.test(name);
+}
+
+async function toPhotoFallbackChatMessage(
   ctx: Context,
   botUsername: string,
+  config: AppConfig,
+  bot: Bot,
   reason: string,
-): ChatMessage | null {
+): Promise<ChatMessage | null> {
   const message = ctx.message;
   if (!message || !('photo' in message)) return null;
   const from = message.from;
   const replyFrom = message.reply_to_message?.from;
   const caption = message.caption?.trim();
+  const replyContext = await buildReplyContext(message, config, bot);
   return {
     provider: 'telegram',
     messageId: message.message_id,
@@ -413,8 +451,65 @@ function toPhotoFallbackChatMessage(
     }],
     date: new Date(message.date * 1000),
     replyToBot: Boolean(replyFrom?.is_bot && replyFrom.username?.toLowerCase() === botUsername.toLowerCase()),
+    ...replyContext,
     entities: message.caption_entities,
   };
+}
+
+async function buildReplyContext(
+  message: Context['message'],
+  config: AppConfig,
+  bot: Bot,
+): Promise<Pick<ChatMessage, 'quotedMessage' | 'quotedImage'>> {
+  const reply = message?.reply_to_message;
+  if (!reply) return {};
+
+  const rawText = ('text' in reply && typeof reply.text === 'string')
+    ? reply.text.trim()
+    : ('caption' in reply && typeof reply.caption === 'string')
+      ? reply.caption.trim()
+      : '';
+  const authorName = reply.from
+    ? ([reply.from.first_name, reply.from.last_name].filter(Boolean).join(' ') || reply.from.username)
+    : undefined;
+  let attachmentSummary: string | undefined;
+  let quotedImage: ChatMessage['quotedImage'];
+
+  if ('photo' in reply && reply.photo?.length) {
+    const photo = [...reply.photo].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+    attachmentSummary = '[изображение]';
+    if (photo && (!photo.file_size || photo.file_size <= config.telegramImageMaxBytes)) {
+      try {
+        const downloadedImage = await downloadTelegramImageDataUrl(config.telegramBotToken, photo.file_id, config.telegramImageMaxBytes, bot);
+        quotedImage = {
+          dataUrl: downloadedImage.dataUrl,
+          mimeType: downloadedImage.mimeType,
+          sizeBytes: downloadedImage.sizeBytes,
+        };
+      } catch (error) {
+        logger.warn('Could not process image from quoted Telegram message', error);
+        attachmentSummary = '[изображение; не удалось передать модели]';
+      }
+    } else {
+      attachmentSummary = '[изображение; не передано: превышает лимит размера]';
+    }
+  } else if ('document' in reply && reply.document) {
+    attachmentSummary = formatReplyAttachment('файл', reply.document.file_name, reply.document.mime_type, reply.document.file_size);
+  } else if ('video' in reply && reply.video) {
+    attachmentSummary = formatReplyAttachment('видео', reply.video.file_name, reply.video.mime_type, reply.video.file_size);
+  } else if ('animation' in reply && reply.animation) {
+    attachmentSummary = formatReplyAttachment('анимация', reply.animation.file_name, reply.animation.mime_type, reply.animation.file_size);
+  }
+
+  const text = [attachmentSummary, rawText].filter(Boolean).join(' ');
+  return {
+    quotedMessage: text ? { text, authorName } : undefined,
+    quotedImage,
+  };
+}
+
+function formatReplyAttachment(kind: string, filename: string | undefined, mimeType: string | undefined, sizeBytes: number | undefined): string {
+  return `[${[kind, filename, mimeType, sizeBytes === undefined ? undefined : `${sizeBytes} bytes`].filter(Boolean).join('; ')}]`;
 }
 
 function threadOptions(threadId: number | null | undefined): { message_thread_id?: number } | undefined {

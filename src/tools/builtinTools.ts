@@ -14,9 +14,12 @@ import { enableMicroSkillTool } from './implementations/enableMicroSkill';
 import { runSkillToolTool } from './implementations/runSkillTool';
 import { readArtifactTool } from './implementations/readArtifact';
 import { readAgentDocsTool } from './implementations/readAgentDocs';
+import { grepChatTool } from './implementations/grepChat';
+import { readChatTool } from './implementations/readChat';
 import { readTrustedSkillInstructionsTool } from './implementations/readTrustedSkillInstructions';
 import { createSendPayloadTool } from './implementations/sendPayload';
 import { listCronJobsTool } from './implementations/listCronJobs';
+import { listChatFilesTool } from './implementations/listChatFiles';
 import { listSkillPackagesTool } from './implementations/listSkillPackages';
 import { rememberFactTool } from './implementations/rememberFact';
 import { saveDecisionTool } from './implementations/saveDecision';
@@ -29,6 +32,9 @@ export function createBuiltinToolRegistry(config?: AppConfig, trustedSkills: Tru
     saveDecisionTool,
     createArtifactTool,
     readArtifactTool,
+    grepChatTool,
+    readChatTool,
+    listChatFilesTool,
     readAgentDocsTool,
     readTrustedSkillInstructionsTool,
     createSendPayloadTool(config?.telegramSendMaxItems),

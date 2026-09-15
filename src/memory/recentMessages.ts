@@ -3,6 +3,7 @@ import { FileStore } from './fileStore';
 
 export const recentAttachmentSchema = z.object({
   kind: z.enum(['file', 'photo', 'video']),
+  attachmentId: z.string().optional(),
   artifactId: z.string().optional(),
   url: z.string().optional(),
   filename: z.string().optional(),

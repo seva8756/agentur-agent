@@ -15,6 +15,12 @@ export type ChatMessage = {
     mimeType: string;
     sizeBytes: number;
   };
+  /** Image attached to the Telegram message being quoted, kept out of chat storage. */
+  quotedImage?: {
+    dataUrl: string;
+    mimeType: string;
+    sizeBytes: number;
+  };
   attachments?: ChatMessageAttachment[];
   date: Date;
   replyToBot?: boolean;
@@ -27,4 +33,9 @@ export type ChatMessageAttachment = {
   filename?: string;
   mimeType?: string;
   sizeBytes?: number;
+  /** Text extracted from a newly received text-like attachment; never sent to the model inline. */
+  extractedText?: string;
+  extractedTextTruncated?: boolean;
+  /** Original bytes from the newly received message; never set for a quoted reply attachment. */
+  originalBytes?: Uint8Array;
 };

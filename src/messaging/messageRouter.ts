@@ -9,6 +9,7 @@ import { readChatSettings } from '../memory/chatSettings';
 import { appendRecentMessage, readRecentMessages, trimRecentMessages } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
 import { maybeUpdateMood } from '../memory/moodDiary';
+import { persistIncomingAttachments } from '../memory/attachmentStore';
 import { AgentScheduler } from '../scheduler/scheduler';
 import { loadEnabledSkills } from '../skills/loader';
 import { matchSkill } from '../skills/matcher';
@@ -20,6 +21,8 @@ import { ToolContext } from '../tools/types';
 import { logger } from '../utils/logger';
 import { handleAgentCommand } from './commands';
 import { ChatMessage } from './types';
+
+const REPLY_QUOTE_MAX_CHARS = 4096;
 
 export type RouterDeps = {
   config: AppConfig;
@@ -113,12 +116,19 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
 }
 
 function buildLlmInput(message: ChatMessage, strippedText: string): string {
-  if (!message.quotedMessage) return strippedText;
-  const { text, authorName } = message.quotedMessage;
-  const MAX_QUOTE = 300;
-  const truncated = text.length > MAX_QUOTE ? `${text.slice(0, MAX_QUOTE)}…` : text;
-  const attribution = authorName ? `${authorName}: ` : '';
-  return `[цитата: ${attribution}"${truncated}"]\n${strippedText}`;
+  const quote = message.quotedMessage ? (() => {
+    const { text, authorName } = message.quotedMessage!;
+    const truncated = text.length > REPLY_QUOTE_MAX_CHARS ? `${text.slice(0, REPLY_QUOTE_MAX_CHARS)}…` : text;
+    const attribution = authorName ? `${authorName}: ` : '';
+    return `[цитата: ${attribution}"${truncated}"]`;
+  })() : undefined;
+  const quotedImageHint = message.quotedImage
+    ? '[К цитируемому сообщению приложено изображение; оно передано модели отдельно.]'
+    : undefined;
+  const fileHint = message.attachments?.some((attachment) => attachment.kind === 'file')
+    ? '[Текстовое содержимое приложенного файла доступно через grep_chat в /chat/attachments.]'
+    : undefined;
+  return [quote, quotedImageHint, strippedText, fileHint].filter(Boolean).join('\n');
 }
 
 async function createAgentReply(message: ChatMessage, llmInput: string, strippedText: string, deps: RouterDeps): Promise<SkillRunResult | null> {
@@ -138,7 +148,16 @@ async function createAgentReply(message: ChatMessage, llmInput: string, stripped
   };
   return generateAgentResult({
     input: llmInput,
-    image: message.image ? { dataUrl: message.image.dataUrl } : undefined,
+    images: [
+      ...(message.quotedImage ? [{
+        dataUrl: message.quotedImage.dataUrl,
+        description: 'Это изображение принадлежит цитируемому сообщению, а не текущему запросу.',
+      }] : []),
+      ...(message.image ? [{
+        dataUrl: message.image.dataUrl,
+        description: 'Это изображение принадлежит текущему сообщению пользователя.',
+      }] : []),
+    ],
     config: deps.config,
     store: deps.store,
     llm: deps.llm,
@@ -152,6 +171,7 @@ function shouldCaptureFullChat(config: AppConfig, chatId: string): boolean {
 }
 
 async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fullCapture: boolean): Promise<void> {
+  const attachments = await persistIncomingAttachments(deps.store, message);
   await appendRecentMessage(deps.store, {
     id: message.messageId,
     chatId: message.chatId,
@@ -162,7 +182,7 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
     text: message.text,
     date: message.date.toISOString(),
     isBot: false,
-    attachments: message.attachments,
+    attachments,
   });
 
   const recent = await readRecentMessages(deps.store);

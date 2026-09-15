@@ -19,6 +19,7 @@ export async function generateAgentReply(params: {
   image?: {
     dataUrl: string;
   };
+  images?: Array<{ dataUrl: string; description: string }>;
   config: AppConfig;
   store: FileStore;
   llm: LlmAdapter;
@@ -33,6 +34,7 @@ export async function generateAgentResult(params: {
   image?: {
     dataUrl: string;
   };
+  images?: Array<{ dataUrl: string; description: string }>;
   config: AppConfig;
   store: FileStore;
   llm: LlmAdapter;
@@ -50,9 +52,10 @@ export async function generateAgentResult(params: {
     trustedSkills: params.toolContext.trustedSkills ?? [],
   });
   logger.info('LLM context budget', formatContextAllocationLog(context.allocation));
-  const messages = attachImageToLastUserMessage(context.messages, params.image?.dataUrl);
+  const images = params.images ?? (params.image ? [{ dataUrl: params.image.dataUrl, description: 'Image attached to the current user message.' }] : []);
+  const messages = attachImagesToLastUserMessage(context.messages, images);
   const text = await chatWithFallbacks(
-    { ...params, toolContext },
+    { ...params, images, toolContext },
     messages,
     { allocation: context.allocation, policy: context.policy },
   );
@@ -88,6 +91,7 @@ async function chatWithFallbacks(
   params: {
     input: string;
     image?: { dataUrl: string };
+    images?: Array<{ dataUrl: string; description: string }>;
     config: AppConfig;
     store: FileStore;
     llm: LlmAdapter;
@@ -99,7 +103,7 @@ async function chatWithFallbacks(
 ): Promise<string> {
   try {
     return await params.llm.chat(messages, {
-      tools: params.config.llmSupportsTools && !params.image ? params.tools : undefined,
+      tools: params.config.llmSupportsTools && !params.images?.length && !params.image ? params.tools : undefined,
       toolContext: params.toolContext,
       maxSteps: params.config.agentMaxToolSteps,
       maxTokens: params.config.replyMaxTokens,
@@ -110,7 +114,7 @@ async function chatWithFallbacks(
       logger.warn('LLM context limit exceeded; retrying with reduced context', { error: formatLogError(error) });
       return chatWithReducedContextFallback(params, messages);
     }
-    if (!params.image) throw error;
+    if (!params.images?.length && !params.image) throw error;
     const reason = humanErrorReason(error);
     const fallbackContext = await buildChatContext(
       params.store,
@@ -179,8 +183,11 @@ function stripImageInputs(messages: Awaited<ReturnType<typeof buildChatContext>>
   });
 }
 
-function attachImageToLastUserMessage(messages: Awaited<ReturnType<typeof buildChatContext>>['messages'], dataUrl: string | undefined) {
-  if (!dataUrl) return messages;
+function attachImagesToLastUserMessage(
+  messages: Awaited<ReturnType<typeof buildChatContext>>['messages'],
+  images: Array<{ dataUrl: string; description: string }>,
+) {
+  if (!images.length) return messages;
   const copy = [...messages];
   const last = copy[copy.length - 1];
   if (!last || last.role !== 'user') return copy;
@@ -188,7 +195,10 @@ function attachImageToLastUserMessage(messages: Awaited<ReturnType<typeof buildC
     ...last,
     content: [
       { type: 'text', text: typeof last.content === 'string' ? last.content : JSON.stringify(last.content ?? '') },
-      { type: 'image_url', image_url: { url: dataUrl } },
+      ...images.flatMap((image) => [
+        { type: 'text' as const, text: `[${image.description}]` },
+        { type: 'image_url' as const, image_url: { url: image.dataUrl } },
+      ]),
     ],
   } as typeof last;
   return copy;

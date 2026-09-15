@@ -4,7 +4,7 @@ COPY package*.json ./
 RUN npm install
 
 FROM deps AS build
-COPY tsconfig.json ./
+COPY tsconfig.json eslint.config.js ./
 COPY src ./src
 COPY dev ./dev
 COPY skills ./skills

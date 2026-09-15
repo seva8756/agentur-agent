@@ -17,6 +17,7 @@ import { readChatSettings, setReplyMode } from '../../src/memory/chatSettings';
 import { smoothMood, defaultMood, writeMood } from '../../src/memory/moodDiary';
 import { appendRecentMessage } from '../../src/memory/recentMessages';
 import { createTextArtifact, readArtifactText } from '../../src/memory/artifactStore';
+import { persistIncomingAttachments } from '../../src/memory/attachmentStore';
 import { AgentScheduler } from '../../src/scheduler/scheduler';
 import { runCronJob } from '../../src/scheduler/jobRuntime';
 import { cronJobSchema } from '../../src/scheduler/schema';
@@ -32,6 +33,9 @@ import { createCronJobTool } from '../../src/tools/implementations/createCronJob
 import { createSkillPackageDraftTool } from '../../src/tools/implementations/createSkillPackageDraft';
 import { createArtifactTool } from '../../src/tools/implementations/createArtifact';
 import { readArtifactTool } from '../../src/tools/implementations/readArtifact';
+import { grepChatTool } from '../../src/tools/implementations/grepChat';
+import { readChatTool } from '../../src/tools/implementations/readChat';
+import { listChatFilesTool } from '../../src/tools/implementations/listChatFiles';
 import { readAgentDocsTool } from '../../src/tools/implementations/readAgentDocs';
 import { readTrustedSkillInstructionsTool } from '../../src/tools/implementations/readTrustedSkillInstructions';
 import { createSendPayloadTool, sendPayloadTool } from '../../src/tools/implementations/sendPayload';
@@ -408,6 +412,38 @@ describe('reply policy', () => {
     expect(decideReply(msg({ text: '/agents status' }), 'agentbot').shouldReply).toBe(false);
     expect(decideReply(msg({ text: 'бот, помоги' }), 'agentbot').shouldReply).toBe(false);
     expect(decideReply(msg({ text: 'люди, как дела?' }), 'agentbot').shouldReply).toBe(false);
+  });
+});
+
+describe('reply attachments', () => {
+  it('passes an image from the quoted message with reply-specific context', async () => {
+    const { store, config, scheduler } = await tempStore();
+    let content = '';
+    const reply = await routeMessage(msg({
+      text: 'что на ней?',
+      replyToBot: true,
+      quotedMessage: { text: '[изображение]', authorName: 'Seva' },
+      quotedImage: { dataUrl: 'data:image/png;base64,AAAA', mimeType: 'image/png', sizeBytes: 4 },
+    }), {
+      config,
+      botUsername: 'agentbot',
+      store,
+      scheduler,
+      tools: new ToolRegistry(),
+      llm: {
+        chat: async (messages) => {
+          const last = messages.at(-1);
+          content = JSON.stringify(last?.content);
+          return 'На изображении тест.';
+        },
+        minimalCheck: async () => 'ok',
+        toolCheck: async () => false,
+      },
+    });
+    expect(skillResultText(reply)).toContain('На изображении');
+    expect(content).toContain('цитируемому сообщению');
+    expect(content).toContain('image_url');
+    expect(content).toContain('data:image/png;base64,AAAA');
   });
 });
 
@@ -1118,6 +1154,114 @@ describe('agent docs', () => {
     expect(docs).toContain('smart');
     expect(docs).toContain('Если что-то не работает');
     expect(docs.length).toBeLessThanOrEqual(12_000);
+  });
+});
+
+describe('chat knowledge tools', () => {
+  it('searches chat-local messages and reads the returned virtual path', async () => {
+    const { store } = await tempStore();
+    await appendRecentMessage(store, {
+      id: 77,
+      chatId: TELEGRAM_CHAT_ID,
+      displayName: 'Seva',
+      text: 'Оплатить счёт необходимо до 25 сентября.',
+      date: '2026-09-16T10:00:00.000Z',
+      isBot: false,
+      attachments: [{ kind: 'file', filename: 'invoice.pdf', mimeType: 'application/pdf', sizeBytes: 1024 }],
+    });
+    const context: ToolContext = { store, timezone: 'Europe/Moscow' };
+
+    const grep = await grepChatTool.execute({
+      pattern: 'оплатить', path: '/chat', regex: false, ignore_case: true, before_context: 1, after_context: 1, max_results: 20,
+    }, context);
+    expect(grep).toContain('/chat/messages/recent.jsonl:1:');
+    expect(grep).toContain('Оплатить счёт');
+
+    const read = await readChatTool.execute({ path: '/chat/messages/recent.jsonl', start_line: 1, end_line: 20 }, context);
+    expect(read).toContain('"displayName":"Seva"');
+    expect(read).toContain('Оплатить счёт необходимо');
+  });
+
+  it('searches text artifacts and keeps virtual paths read-only', async () => {
+    const { store } = await tempStore();
+    await createTextArtifact(store, {
+      filename: 'quarterly-report.md',
+      mimeType: 'text/markdown',
+      text: '# Report\nRevenue grew by 12%.',
+    }, { kind: 'agent' });
+    const context: ToolContext = { store, timezone: 'Europe/Moscow' };
+    const result = await grepChatTool.execute({
+      pattern: 'revenue\\s+grew', path: '/chat/artifacts', regex: true, ignore_case: true, before_context: 0, after_context: 0, max_results: 20,
+    }, context);
+    expect(result).toContain('/chat/artifacts/quarterly-report.md--');
+    expect(result).toContain('Revenue grew by 12%.');
+    await expect(readChatTool.execute({ path: '/chat/../secrets.txt', start_line: 1, end_line: 1 }, context)).rejects.toThrow('/chat');
+  });
+
+  it('indexes extracted text from a separately stored incoming attachment', async () => {
+    const { store } = await tempStore();
+    const attachments = await persistIncomingAttachments(store, {
+      messageId: 91,
+      date: new Date('2026-09-16T10:00:00.000Z'),
+      attachments: [{
+        kind: 'file', filename: 'plan.md', mimeType: 'text/markdown', sizeBytes: 44,
+        extractedText: '# Plan\nShip knowledge retrieval on Friday.',
+      }],
+    });
+    await appendRecentMessage(store, {
+      id: 91, chatId: TELEGRAM_CHAT_ID, text: '[файл: plan.md]', date: '2026-09-16T10:00:00.000Z', isBot: false, attachments,
+    });
+    const context: ToolContext = { store, timezone: 'Europe/Moscow' };
+    const grep = await grepChatTool.execute({
+      pattern: 'knowledge retrieval', path: '/chat/attachments', regex: false, ignore_case: true, before_context: 0, after_context: 0, max_results: 20,
+    }, context);
+    expect(grep).toContain('/chat/attachments/plan.md--');
+    expect(grep).toContain('Ship knowledge retrieval on Friday.');
+  });
+
+  it('stores original bytes alongside metadata and extracted text for an incoming attachment', async () => {
+    const { store } = await tempStore();
+    const original = new TextEncoder().encode('# Plan\nKeep the source file.');
+    const attachments = await persistIncomingAttachments(store, {
+      messageId: 92,
+      date: new Date('2026-09-16T10:00:00.000Z'),
+      attachments: [{
+        kind: 'file', filename: 'plan.md', mimeType: 'text/markdown', originalBytes: original,
+        extractedText: new TextDecoder().decode(original),
+      }],
+    });
+    const attachmentId = attachments?.[0]?.attachmentId;
+    expect(attachmentId).toBeDefined();
+    expect(await fs.readFile(store.resolve('attachments', attachmentId!, 'original'))).toEqual(Buffer.from(original));
+    const meta = JSON.parse(await fs.readFile(store.resolve('attachments', attachmentId!, 'meta.json'), 'utf8'));
+    expect(meta.originalStored).toBe(true);
+  });
+
+  it('lists only available attachments and artifacts as readable virtual files', async () => {
+    const { store } = await tempStore();
+    await persistIncomingAttachments(store, {
+      messageId: 92,
+      date: new Date('2026-09-16T10:00:00.000Z'),
+      attachments: [{ kind: 'file', filename: 'plan.md', mimeType: 'text/markdown', extractedText: '# Plan' }],
+    });
+    await createTextArtifact(store, {
+      filename: 'report.md', mimeType: 'text/markdown', text: '# Report',
+    }, { kind: 'agent' });
+
+    const inventory = await listChatFilesTool.execute({}, { store, timezone: 'Europe/Moscow' });
+    expect(inventory).toContain('Attachments:');
+    expect(inventory).toContain('/chat/attachments/plan.md--');
+    expect(inventory).toContain('meta.txt, content.txt');
+    expect(inventory).toContain('Artifacts:');
+    expect(inventory).toContain('/chat/artifacts/report.md--');
+    expect(inventory).not.toContain('/chat/messages');
+  });
+
+  it('rejects regex features that could cause unsafe backtracking', async () => {
+    const { store } = await tempStore();
+    await expect(grepChatTool.execute({
+      pattern: '(a+)+$', path: '/chat', regex: true, ignore_case: true, before_context: 0, after_context: 0, max_results: 20,
+    }, { store, timezone: 'Europe/Moscow' })).rejects.toThrow('groups are not supported');
   });
 });
 
