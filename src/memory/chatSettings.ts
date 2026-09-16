@@ -17,15 +17,20 @@ export const chatSettingsSchema = z.object({
 
 export type ChatSettings = z.output<typeof chatSettingsSchema>;
 
-export const defaultChatSettings: ChatSettings = {
-  replyMode: 'called',
-  profanityMode: 'normal',
-  locale: 'ru',
-  updatedAt: new Date(0).toISOString(),
-};
+export function createDefaultChatSettings(locale: PromptLocale = 'ru'): ChatSettings {
+  return {
+    replyMode: 'called',
+    profanityMode: 'normal',
+    locale,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+// Retained for callers that need the default values outside of initialization.
+export const defaultChatSettings = createDefaultChatSettings();
 
 export async function readChatSettings(store: FileStore, defaultLocale: PromptLocale = 'ru'): Promise<ChatSettings> {
-  const settings = await store.ensureJson(chatSettingsSchema, { ...defaultChatSettings, locale: defaultLocale }, 'chat', 'settings.json');
+  const settings = await store.ensureJson(chatSettingsSchema, createDefaultChatSettings(defaultLocale), 'chat', 'settings.json');
   if (settings.locale === defaultLocale || settings.locale !== 'ru' || defaultLocale === 'ru') return settings;
 
   // Settings files written before locale support parse as `ru` because of the schema default.

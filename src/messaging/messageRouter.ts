@@ -8,7 +8,7 @@ import { FileStore } from '../memory/fileStore';
 import { readChatSettings } from '../memory/chatSettings';
 import { appendRecentMessage, readRecentMessages, trimRecentMessages } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
-import { maybeUpdateMood } from '../memory/moodDiary';
+import { maybeUpdateMood } from './moodUpdate';
 import { persistIncomingAttachments } from '../memory/attachmentStore';
 import { AgentScheduler } from '../scheduler/scheduler';
 import { loadEnabledSkills } from '../skills/loader';
@@ -186,6 +186,8 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
   });
 
   const recent = await readRecentMessages(deps.store);
+  await maybeUpdateMood(deps.store, deps.llm, recent, deps.config.moodUpdateEveryMessages);
+
   if (!fullCapture && recent.length >= deps.config.interactionSummaryEveryMessages) {
     const summary = await summarizeAndResetInteractions(deps.store, recent, deps.config.summaryFileMaxChars);
     logger.info('Interaction messages summarized and reset', {
@@ -196,7 +198,6 @@ async function persistIncomingMessage(message: ChatMessage, deps: RouterDeps, fu
   }
 
   if (fullCapture) {
-    await maybeUpdateMood(deps.store, recent.map((m) => m.text), deps.config.moodUpdateEveryMessages);
     await trimRecentMessages(
       deps.store,
       deps.config.recentMessagesFileLimit,

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { Bot } from 'grammy';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { ChatRuntimeManager } from '../../src/agent/chatRuntime';
 import { loadConfig, AppConfig } from '../../src/config';
 import { allocateContextStages, buildChatContext, conservativeTokenEstimator } from '../../src/agent/context';
@@ -14,7 +15,8 @@ import { runToolLoop } from '../../src/llm/toolLoop';
 import { FileStore, initializeDataDir } from '../../src/memory/fileStore';
 import { IdentityTooLongError, readIdentity, writeIdentity } from '../../src/memory/identity';
 import { readChatSettings, setReplyMode } from '../../src/memory/chatSettings';
-import { smoothMood, defaultMood, writeMood } from '../../src/memory/moodDiary';
+import { readMood, smoothMood, defaultMood, writeMood } from '../../src/memory/moodDiary';
+import { maybeUpdateMood } from '../../src/messaging/moodUpdate';
 import { appendRecentMessage } from '../../src/memory/recentMessages';
 import { createTextArtifact, readArtifactText } from '../../src/memory/artifactStore';
 import { persistIncomingAttachments } from '../../src/memory/attachmentStore';
@@ -357,6 +359,36 @@ describe('single-chat filtering', () => {
     await routeMessage(msg({ messageId: 2, text: '@agentbot ping again' }), deps);
     expect(await store.readJsonl(z.any(), 'chat', 'recent.jsonl')).toHaveLength(0);
     expect(await store.readJsonl(z.any(), 'chat', 'interaction-summaries.jsonl')).toHaveLength(1);
+  });
+
+  it('updates mood on its own interval outside full-capture chats', async () => {
+    const { store, config, scheduler } = await tempStore();
+    let moodCalls = 0;
+    const llm = {
+      chat: async (messages: ChatCompletionMessageParam[]) => {
+        if (String(messages[0]?.content).includes('Assess the mood')) {
+          moodCalls += 1;
+          return '{"warmth":1,"tension":0.6,"humor":0.4}';
+        }
+        return 'pong';
+      },
+      minimalCheck: async () => 'ok',
+      toolCheck: async () => false,
+    };
+    const deps = {
+      config: { ...config, moodUpdateEveryMessages: 2, interactionSummaryEveryMessages: 10 },
+      botUsername: 'agentbot',
+      store,
+      scheduler,
+      tools: new ToolRegistry(),
+      llm,
+    };
+
+    await routeMessage(msg({ messageId: 1, text: '@agentbot first' }), deps);
+    await routeMessage(msg({ messageId: 2, text: '@agentbot second' }), deps);
+
+    expect(moodCalls).toBe(1);
+    expect((await readMood(store)).warmth).toBeCloseTo(0.6);
   });
 
   it('smart mode stores background messages and can proactively reply', async () => {
@@ -1361,11 +1393,96 @@ describe('chat identity', () => {
 });
 
 describe('mood', () => {
+  it('uses the current time when initializing settings and mood', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiny-agent-timestamps-'));
+    const store = new FileStore(dir);
+    const before = Date.now();
+    const [settings, mood] = await Promise.all([readChatSettings(store), readMood(store)]);
+    const after = Date.now();
+
+    for (const value of [settings.updatedAt, mood.updatedAt]) {
+      const timestamp = Date.parse(value);
+      expect(timestamp).toBeGreaterThanOrEqual(before);
+      expect(timestamp).toBeLessThanOrEqual(after);
+    }
+  });
+
   it('smooths signal into current values', () => {
     const next = smoothMood(defaultMood, { warmth: 1, tension: 1, humor: 0 }, 0.5);
     expect(next.warmth).toBeCloseTo(0.75);
     expect(next.tension).toBeCloseTo(0.55);
     expect(next.humor).toBeCloseTo(0.1);
+  });
+
+  it('updates mood from the model JSON assessment', async () => {
+    const { store } = await tempStore();
+    const current = await readMood(store);
+    const chat = vi.fn(async (messages) => {
+      expect(String(messages[0]?.content)).toContain('Return strict JSON only');
+      expect(String(messages[1]?.content)).toContain('всё хорошо, спасибо');
+      return '{"warmth":1,"tension":0.6,"humor":0.4}';
+    });
+
+    const next = await maybeUpdateMood(store, {
+      chat,
+      minimalCheck: async () => 'ok',
+      toolCheck: async () => false,
+    }, [{
+      id: 1,
+      chatId: TELEGRAM_CHAT_ID,
+      text: 'всё хорошо, спасибо',
+      date: new Date().toISOString(),
+      isBot: false,
+    }], 1);
+
+    expect(chat).toHaveBeenCalledOnce();
+    expect(next.warmth).toBeCloseTo(0.6);
+    expect(next.tension).toBeCloseTo(0.2);
+    expect(next.humor).toBeCloseTo(0.24);
+  });
+
+  it('keeps the previous mood when the model does not return valid JSON', async () => {
+    const { store } = await tempStore();
+    const current = { warmth: 0.7, tension: 0.3, humor: 0.4, updatedAt: new Date().toISOString() };
+    await writeMood(store, current);
+
+    const next = await maybeUpdateMood(store, {
+      chat: async () => 'certainly!',
+      minimalCheck: async () => 'ok',
+      toolCheck: async () => false,
+    }, [{
+      id: 1,
+      chatId: TELEGRAM_CHAT_ID,
+      text: 'всё хорошо, спасибо',
+      date: new Date().toISOString(),
+      isBot: false,
+    }], 1);
+
+    expect(next).toEqual(current);
+    expect(await readMood(store)).toEqual(current);
+  });
+
+  it('sends the full configured mood window to the model', async () => {
+    const { store } = await tempStore();
+    const messages = Array.from({ length: 51 }, (_, id) => ({
+      id,
+      chatId: TELEGRAM_CHAT_ID,
+      text: `message-${id} ${'x'.repeat(500)}`,
+      date: new Date().toISOString(),
+      isBot: false,
+    }));
+    const chat = vi.fn(async (_messages: ChatCompletionMessageParam[]) => '{"warmth":0.5,"tension":0.1,"humor":0.2}');
+
+    await maybeUpdateMood(store, {
+      chat,
+      minimalCheck: async () => 'ok',
+      toolCheck: async () => false,
+    }, messages, 51);
+
+    const prompt = String(chat.mock.calls[0]?.[0][1]?.content);
+    expect(prompt).toContain('message-0');
+    expect(prompt).toContain('message-50');
+    expect(prompt.split('\n').slice(1)).toHaveLength(51);
   });
 });
 

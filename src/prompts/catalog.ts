@@ -274,6 +274,22 @@ export function buildSmartReplyUserPrompt(recentChat: string, currentMessage: st
   return `Recent chat:\n${recentChat}\n\nCurrent message:\n${currentMessage}`;
 }
 
+// System prompt для отдельной оценки динамики настроения по недавнему фрагменту чата.
+export function buildMoodAnalysisSystemPrompt(current: Mood): string {
+  return [
+    'Assess the mood expressed in the recent chat messages.',
+    'Return strict JSON only, with no Markdown or explanation: {"warmth": number, "tension": number, "humor": number}.',
+    'Each value must be between 0 and 1. warmth is friendliness and mutual goodwill; tension is conflict, stress, frustration, or urgency; humor is playful or joking tone.',
+    'Use the message sequence and context, including irony, rather than isolated keywords. Assess the new messages only; the application smooths the result into the prior state.',
+    `Current smoothed mood for context: warmth=${current.warmth.toFixed(2)}, tension=${current.tension.toFixed(2)}, humor=${current.humor.toFixed(2)}.`,
+  ].join(' ');
+}
+
+// Передаёт модели размеченный недавний диалог для оценки настроения.
+export function buildMoodAnalysisUserPrompt(recentChat: string): string {
+  return `Recent chat:\n${recentChat}`;
+}
+
 // Форматирует trusted native skill в компактную строку inventory для модели.
 function formatTrustedSkillForPrompt(skill: TrustedSkillPromptInfo): string {
   return `- trusted_skill=${skill.manifest.id}; title=${skill.manifest.title}; description=${skill.manifest.description}; runtime=native`;

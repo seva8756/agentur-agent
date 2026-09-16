@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { FileStore } from './fileStore';
-import { analyzeMoodSignal, readMood, smoothMood, writeMood } from './moodDiary';
+import { readMood } from './moodDiary';
 import { clearRecentMessages, formatMessageAuthor, formatRecentMessageForContext, RecentMessage } from './recentMessages';
 
 export const interactionSummarySchema = z.object({
@@ -24,12 +24,9 @@ export async function summarizeAndResetInteractions(
 
   const userMessages = messages.filter((message) => !message.isBot);
   const botMessages = messages.filter((message) => message.isBot);
-  const signal = analyzeMoodSignal(messages.map((message) => message.text));
-  const currentMood = await readMood(store);
-  const mood = smoothMood(currentMood, signal, 0.25);
-  await writeMood(store, mood);
+  const mood = await readMood(store);
 
-  const summary = buildInteractionSummary(messages, signal);
+  const summary = buildInteractionSummary(messages, mood);
   const createdAt = new Date().toISOString();
   const record: InteractionSummary = {
     id: `interaction_summary_${Date.now()}`,
@@ -37,7 +34,7 @@ export async function summarizeAndResetInteractions(
     messageCount: messages.length,
     userMessageCount: userMessages.length,
     botMessageCount: botMessages.length,
-    mood: signal,
+    mood,
     summary,
   };
 

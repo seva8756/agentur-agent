@@ -6,6 +6,7 @@ import { FileStore } from '../memory/fileStore';
 import { appendRecentMessage, readRecentMessages } from '../memory/recentMessages';
 import type { RecentAttachment } from '../memory/recentMessages';
 import { summarizeAndResetInteractions } from '../memory/interactionSummary';
+import { maybeUpdateMood } from '../messaging/moodUpdate';
 import { IDENTITY_MAX_CHARS, IdentityTooLongError, writeIdentity } from '../memory/identity';
 import { ChatAdapter } from '../messaging/adapter';
 import { nativeChatId, providerChatId } from '../messaging/chatAddress';
@@ -188,6 +189,7 @@ async function handleIncomingChatMessage(
     attachments: skillResultAttachmentsForMemory(reply),
   });
   const recent = await readRecentMessages(runtime.store);
+  await maybeUpdateMood(runtime.store, params.runtimeManager.llm, recent, params.config.moodUpdateEveryMessages);
   if (!params.runtimeManager.isFullCaptureChat(message.chatId) && recent.length >= params.config.interactionSummaryEveryMessages) {
     await summarizeAndResetInteractions(runtime.store, recent, params.config.summaryFileMaxChars);
   }
