@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { providerChatId } from './messaging/chatAddress';
 import { TELEGRAM_SEND_MAX_ITEMS_LIMIT } from './telegram/sendLimits';
 import { validateTimeZone } from './utils/time';
+import { localeSchema } from './memory/chatSettings';
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ const envSchema = z.object({
   LLM_TOOL_LOOP_RETRIES: z.coerce.number().int().min(0).default(1),
   AGENT_DATA_DIR: z.string().min(1).default('./data'),
   AGENT_TIMEZONE: z.string().min(1).refine(validateTimeZone, 'Invalid IANA timezone').default('Europe/Amsterdam'),
+  AGENT_DEFAULT_LOCALE: localeSchema.default('ru'),
   AGENT_MAX_TOOL_STEPS: z.coerce.number().int().positive().default(6),
   TELEGRAM_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(5242880),
   TELEGRAM_ATTACHMENT_MAX_BYTES: z.coerce.number().int().positive().default(5242880),
@@ -95,6 +97,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     llmToolLoopRetries: v.LLM_TOOL_LOOP_RETRIES,
     agentDataDir: path.resolve(v.AGENT_DATA_DIR),
     agentTimezone: v.AGENT_TIMEZONE,
+    defaultLocale: v.AGENT_DEFAULT_LOCALE,
     agentMaxToolSteps: v.AGENT_MAX_TOOL_STEPS,
     telegramImageMaxBytes: v.TELEGRAM_IMAGE_MAX_BYTES,
     telegramAttachmentMaxBytes: v.TELEGRAM_ATTACHMENT_MAX_BYTES,

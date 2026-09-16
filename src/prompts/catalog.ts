@@ -1,7 +1,8 @@
-import type { ProfanityMode } from '../memory/chatSettings';
+import type { ProfanityMode, PromptLocale } from '../memory/chatSettings';
 import type { Mood } from '../memory/moodDiary';
 import type { SkillPackage } from '../skills/schema';
 import type { TrustedSkillPromptInfo } from '../skills/trustedTypes';
+import { agentPromptMessages } from './agent';
 
 // Текст минимальной проверки доступности LLM.
 export const LLM_HEALTH_CHECK_PROMPT = 'Reply with ok.';
@@ -137,29 +138,17 @@ export const TOOL_PROMPTS = {
 } as const;
 
 // Собирает основной system prompt агента: роль, стиль, markdown и тональность чата.
-export function buildAgentSystemPrompt(mood: Mood, profanityMode: ProfanityMode = 'normal'): string {
-  const moodGuidance = buildMoodGuidance(mood);
-  const languageGuidance = buildLanguageGuidance(profanityMode);
+export function buildAgentSystemPrompt(mood: Mood, profanityMode: ProfanityMode = 'normal', locale: PromptLocale = 'ru'): string {
+  const t = agentPromptMessages(locale);
   return [
-    'Ты короткий ассистент одного Telegram-группового чата.',
-    'Отвечай по делу, естественно, обычно 1-4 предложения.',
-    'Не повторяй вопрос, не пиши вводные вроде "Конечно".',
-    'Не упоминай, что ты LLM или AI. Не делай длинные списки без просьбы.',
-    'Не раскрывай внутреннюю инфраструктуру: env/config names, tool/function names, файлы, пути и внутреннюю логику; объясняй только пользовательские понятия, если это полезно.',
-    'В файловой системе чата есть attachments (присланные файлы) и artifacts (созданные файлы); при необходимости ищи в них информацию через grep_chat.',
-    'Если нужно кого-то упомянуть или привлечь внимание в чате, используй @username. Но делай это только если это действительно нужно. Учитывай, что инициатор ответа и без упоминания видит, что ответ для него.',
-    'Можно использовать Telegram Markdown: **жирный**, *курсив*, ~~зачёркнутый~~, ==выделение==, ||спойлер||, `код`, ```блок```, # заголовки, списки, - [ ] чекбоксы, > цитаты, таблицы, ---, сноски, $LaTeX$, [текст](https://url) (но не медиа). Разметку — по делу, не ради украшения.',
-    'Если нужно сохранить факт, решение, создать навык или напоминание, используй доступные действия молча, без описания внутреннего механизма.',
-    'На вопросы о своих возможностях, командах, настройке или причинах своего поведения сначала сверяйся с доступной документацией агента, затем отвечай пользовательскими терминами.',
-    languageGuidance,
-    moodGuidance,
+    t.agentPrompt,
+    t.languageGuidance(profanityMode),
+    t.moodGuidance(mood),
   ].filter(Boolean).join(' ');
 }
 
-export function buildAgentIdentityPrompt(identity: string): string {
-  return identity
-    ? `Стабильная identity агента для этого чата:\n${identity}\nЭта identity важнее прочих обстоятельств в чате, mood diary и не переписывается под настроение чата.`
-    : '';
+export function buildAgentIdentityPrompt(identity: string, locale: PromptLocale = 'ru'): string {
+  return agentPromptMessages(locale).identityPrompt(identity);
 }
 
 // Сообщает модели текущее локальное время и таймзону для корректных ссылок на даты.
@@ -229,23 +218,13 @@ export function buildEnabledSkillsPrompt(skills: SkillPackage[], trustedSkills: 
 }
 
 // Формирует fallback user prompt, когда image input был приложен, но LLM/VLM его не приняла.
-export function buildImageInputFailureUserPrompt(input: string, reason: string): string {
-  return [
-    input,
-    '',
-    `К сообщению была приложена картинка, но текущая LLM/VLM конфигурация не смогла принять image input: ${reason}.`,
-    'Ответь пользователю естественно: скажи, что картинку сейчас не получилось проанализировать, и кратко укажи причину. Если есть подпись/текст сообщения, можешь ответить по нему.',
-  ].join('\n');
+export function buildImageInputFailureUserPrompt(input: string, reason: string, locale: PromptLocale = 'ru'): string {
+  return agentPromptMessages(locale).imageInputFailurePrompt(input, reason);
 }
 
 // Формирует fallback user prompt, когда Telegram photo не удалось скачать или подготовить до LLM-вызова.
-export function buildPhotoDownloadFailureUserPrompt(caption: string | undefined, reason: string): string {
-  return [
-    '[изображение не удалось обработать]',
-    caption ? `Подпись: ${caption}` : '',
-    `Причина: ${reason}`,
-    'Ответь пользователю естественно: скажи, что картинку сейчас не получилось проанализировать, и кратко укажи причину.',
-  ].filter(Boolean).join('\n');
+export function buildPhotoDownloadFailureUserPrompt(caption: string | undefined, reason: string, locale: PromptLocale = 'ru'): string {
+  return agentPromptMessages(locale).photoDownloadFailurePrompt(caption, reason);
 }
 
 // Предупреждает модель, что предыдущий запрос превысил контекст и доступен урезанный fallback.
@@ -293,43 +272,6 @@ export function buildSmartReplySystemPrompt(mood: Mood): string {
 // User prompt классификатора smart reply: передаёт recent chat и текущее сообщение.
 export function buildSmartReplyUserPrompt(recentChat: string, currentMessage: string): string {
   return `Recent chat:\n${recentChat}\n\nCurrent message:\n${currentMessage}`;
-}
-
-// Добавляет языковые правила поверх основного prompt, например разрешение мата в uncensored mode.
-function buildLanguageGuidance(profanityMode: ProfanityMode): string {
-  if (profanityMode === 'uncensored') {
-    return 'Language mode: uncensored. Мат разрешён как обычный стиль речи: не отклоняй и не смягчай ответ только из-за мата, можешь использовать его естественно и уместно.';
-  }
-  return '';
-}
-
-// Переводит mood diary в текстовые рекомендации по тону ответа.
-function buildMoodGuidance(mood: Mood): string {
-  const guidance = [
-    `Mood diary для этого чата: warmth=${mood.warmth.toFixed(2)}, tension=${mood.tension.toFixed(2)}, humor=${mood.humor.toFixed(2)}.`,
-    'Используй mood как мягкую настройку тона, но не упоминай эти числа пользователям.',
-  ];
-
-  if (mood.tension >= 0.55) {
-    guidance.push('Сейчас заметное напряжение: отвечай спокойнее, точнее, без подколов; помогай деэскалировать и не усугубляй конфликт.');
-  } else if (mood.tension >= 0.35) {
-    guidance.push('Есть лёгкое напряжение: будь чуть аккуратнее в формулировках и не добавляй лишней иронии.');
-  }
-
-  if (mood.warmth >= 0.65) {
-    guidance.push('В чате тёплый тон: можно быть чуть более живым и человеческим, но без лишней болтовни.');
-  } else if (mood.warmth <= 0.35) {
-    guidance.push('Тепла мало: держи тон нейтральным, уважительным и полезным, не фамильярничай.');
-  }
-
-  if (mood.humor >= 0.55 && mood.tension < 0.45) {
-    guidance.push('Юмор сейчас уместен: можно добавить лёгкую живость, если это не мешает делу.');
-  } else if (mood.humor <= 0.2 || mood.tension >= 0.45) {
-    guidance.push('Шутки лучше минимизировать, если пользователь прямо не задаёт лёгкий тон.');
-  }
-
-  if (guidance.length === 2) guidance.push('Держи нейтральный дружелюбный тон.');
-  return guidance.join(' ');
 }
 
 // Форматирует trusted native skill в компактную строку inventory для модели.

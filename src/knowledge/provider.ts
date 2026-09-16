@@ -67,7 +67,7 @@ export async function listVirtualChatFiles(store: FileStore): Promise<VirtualCha
     },
     {
       path: `${CHAT_ROOT}/state/settings.json`,
-      text: JSON.stringify({ replyMode: settings.replyMode, profanityMode: settings.profanityMode, updatedAt: settings.updatedAt }, null, 2),
+      text: JSON.stringify({ replyMode: settings.replyMode, profanityMode: settings.profanityMode, locale: settings.locale, updatedAt: settings.updatedAt }, null, 2),
     },
     {
       path: `${CHAT_ROOT}/messages/recent.jsonl`,

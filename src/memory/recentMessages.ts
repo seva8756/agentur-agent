@@ -60,7 +60,7 @@ export async function trimRecentMessages(
   const kept = messages.slice(overflowCount);
   const existing = await store.readText('', 'chat', 'summary.md');
   const archiveText = archived.map((m) => formatRecentMessageForContext(m)).join('\n');
-  const updated = `${existing.trim()}\n\nАрхив контекста ${new Date().toISOString()}:\n${archiveText}`
+  const updated = `${existing.trim()}\n\nContext archive ${new Date().toISOString()}:\n${archiveText}`
     .trim()
     .slice(-summaryFileMaxChars);
   await store.writeText(updated, 'chat', 'summary.md');

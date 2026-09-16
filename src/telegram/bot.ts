@@ -77,7 +77,7 @@ export async function createTelegramBot(params: TelegramBotParams): Promise<{ bo
       await handleIncomingChatMessage(ctx, message, botUsername, params);
     } catch (error) {
       logger.warn('Could not process Telegram photo', error);
-      const fallback = await toPhotoFallbackChatMessage(ctx, botUsername, params.config, bot, humanErrorReason(error));
+      const fallback = await toPhotoFallbackChatMessage(ctx, botUsername, params.config, bot, humanErrorReason(error), params.config.defaultLocale);
       if (!fallback) {
         await replyMarkdown(ctx, 'Не смог обработать картинку.', ctx.message.message_id, ctx.message.message_thread_id);
         return;
@@ -343,7 +343,7 @@ async function toPhotoChatMessage(
     fromId: from ? String(from.id) : undefined,
     username: from?.username,
     displayName: [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username,
-    text: caption ? `[изображение] ${caption}` : '[изображение]',
+    text: caption ? `[image] ${caption}` : '[image]',
     image,
     attachments: [{
       kind: 'photo',
@@ -370,7 +370,7 @@ async function toDocumentChatMessage(
   const replyFrom = message.reply_to_message?.from;
   const caption = message.caption?.trim();
   const filename = message.document.file_name;
-  const label = filename ? `[файл: ${filename}]` : '[файл]';
+  const label = filename ? `[file: ${filename}]` : '[file]';
   let extractedText: string | undefined;
   let extractedTextTruncated = false;
   let originalBytes: Uint8Array | undefined;
@@ -429,6 +429,7 @@ async function toPhotoFallbackChatMessage(
   config: AppConfig,
   bot: Bot,
   reason: string,
+  locale: 'ru' | 'en',
 ): Promise<ChatMessage | null> {
   const message = ctx.message;
   if (!message || !('photo' in message)) return null;
@@ -445,7 +446,7 @@ async function toPhotoFallbackChatMessage(
     fromId: from ? String(from.id) : undefined,
     username: from?.username,
     displayName: [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username,
-    text: buildPhotoDownloadFailureUserPrompt(caption, reason),
+    text: buildPhotoDownloadFailureUserPrompt(caption, reason, locale),
     attachments: [{
       kind: 'photo',
     }],
@@ -477,7 +478,7 @@ async function buildReplyContext(
 
   if ('photo' in reply && reply.photo?.length) {
     const photo = [...reply.photo].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
-    attachmentSummary = '[изображение]';
+    attachmentSummary = '[image]';
     if (photo && (!photo.file_size || photo.file_size <= config.telegramImageMaxBytes)) {
       try {
         const downloadedImage = await downloadTelegramImageDataUrl(config.telegramBotToken, photo.file_id, config.telegramImageMaxBytes, bot);
@@ -488,17 +489,17 @@ async function buildReplyContext(
         };
       } catch (error) {
         logger.warn('Could not process image from quoted Telegram message', error);
-        attachmentSummary = '[изображение; не удалось передать модели]';
+        attachmentSummary = '[image; could not be passed to the model]';
       }
     } else {
-      attachmentSummary = '[изображение; не передано: превышает лимит размера]';
+      attachmentSummary = '[image; not passed: exceeds size limit]';
     }
   } else if ('document' in reply && reply.document) {
-    attachmentSummary = formatReplyAttachment('файл', reply.document.file_name, reply.document.mime_type, reply.document.file_size);
+    attachmentSummary = formatReplyAttachment('file', reply.document.file_name, reply.document.mime_type, reply.document.file_size);
   } else if ('video' in reply && reply.video) {
-    attachmentSummary = formatReplyAttachment('видео', reply.video.file_name, reply.video.mime_type, reply.video.file_size);
+    attachmentSummary = formatReplyAttachment('video', reply.video.file_name, reply.video.mime_type, reply.video.file_size);
   } else if ('animation' in reply && reply.animation) {
-    attachmentSummary = formatReplyAttachment('анимация', reply.animation.file_name, reply.animation.mime_type, reply.animation.file_size);
+    attachmentSummary = formatReplyAttachment('animation', reply.animation.file_name, reply.animation.mime_type, reply.animation.file_size);
   }
 
   const text = [attachmentSummary, rawText].filter(Boolean).join(' ');

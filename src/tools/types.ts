@@ -5,12 +5,14 @@ import { AgentScheduler } from '../scheduler/scheduler';
 import type { McpManager } from '../integrations/mcp/manager';
 import type { TrustedSkillPromptInfo } from '../skills/trustedTypes';
 import { ChatMessage } from '../messaging/types';
+import type { PromptLocale } from '../memory/chatSettings';
 import type { SkillRunResult } from '../skills/result';
 
 export type ToolContext = {
   store: FileStore;
   scheduler?: AgentScheduler;
   timezone: string;
+  locale?: PromptLocale;
   httpAllowedOrigins?: string[];
   httpBlockedHosts?: string[];
   httpAllowedPrivateHosts?: string[];

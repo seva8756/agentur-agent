@@ -65,12 +65,12 @@ export async function runPackageTool(
   options: SkillRuntimeOptions,
 ): Promise<SkillRunResult | null> {
   if (!(toolName in skill.tools)) {
-    return textSkillResult(`Навык ${skill.title} не содержит tool ${toolName}.`);
+    return textSkillResult(`Skill ${skill.title} does not contain tool ${toolName}.`);
   }
   const validation = validateScriptedSkill(skill);
   if (validation.length) {
     await auditScriptRun(store, skill, toolName, 'validation_failed', { errors: validation });
-    return textSkillResult(`Навык ${skill.title} не прошёл проверку: ${validation.join(', ')}.`);
+    return textSkillResult(`Skill ${skill.title} failed validation: ${validation.join(', ')}.`);
   }
 
   try {
@@ -83,7 +83,7 @@ export async function runPackageTool(
       error: humanError(error),
       logs: error instanceof ScriptedSkillError ? error.logs : [],
     });
-    return textSkillResult(`Навык ${skill.title} не выполнился.`);
+    return textSkillResult(`Skill ${skill.title} did not complete.`);
   }
 }
 

@@ -82,9 +82,12 @@ CONTEXT_WINDOW_TOKENS=32000
 CONTEXT_BUDGET_TOKENS=12000
 REPLY_MAX_TOKENS=900
 TELEGRAM_SEND_MAX_ITEMS=10
+AGENT_DEFAULT_LOCALE=ru
 ```
 
 `CONTEXT_WINDOW_TOKENS` — жёсткое окно выбранной модели. `CONTEXT_BUDGET_TOKENS` — обычный рабочий бюджет текстового prompt; длинный user input может вытеснять память и использовать свободную часть окна. `REPLY_MAX_TOKENS` резервируется под ответ и передаётся провайдеру как `max_tokens`. Лимиты Telegram, HTTP, MCP и хранения истории остаются отдельными byte/size ограничениями.
+
+`AGENT_DEFAULT_LOCALE` задаёт язык новых чатов: `ru` (по умолчанию) или `en`. В конкретном чате его можно изменить командой `/agentur language ru` или `/agentur language en`.
 
 ## Telegram Setup
 

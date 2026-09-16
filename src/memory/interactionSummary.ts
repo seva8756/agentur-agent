@@ -53,7 +53,7 @@ function buildInteractionSummary(messages: RecentMessage[], mood: { warmth: numb
   const users = [...new Set(messages.filter((m) => !m.isBot).map((m) => formatMessageAuthor(m)))]
     .slice(0, 8)
     .join(', ');
-  const topics = extractKeywords(messages.map((message) => message.text)).slice(0, 10).join(', ') || 'без явных тем';
+  const topics = extractKeywords(messages.map((message) => message.text)).slice(0, 10).join(', ') || 'no explicit topics';
   const lastUserMessages = messages
     .filter((m) => !m.isBot)
     .slice(-5)
@@ -65,11 +65,11 @@ function buildInteractionSummary(messages: RecentMessage[], mood: { warmth: numb
     .map((m) => formatRecentMessageForContext(m, 160))
     .join(' | ');
   return [
-    `Сообщений: ${messages.length}; участники: ${users || 'нет'}.`,
-    `Темы/ключевые слова: ${topics}.`,
-    `Настроение: warmth=${mood.warmth.toFixed(2)}, tension=${mood.tension.toFixed(2)}, humor=${mood.humor.toFixed(2)}.`,
-    lastUserMessages ? `Последние обращения: ${lastUserMessages}` : '',
-    attachmentMessages ? `Вложения: ${attachmentMessages}` : '',
+    `Messages: ${messages.length}; participants: ${users || 'none'}.`,
+    `Topics/keywords: ${topics}.`,
+    `Mood: warmth=${mood.warmth.toFixed(2)}, tension=${mood.tension.toFixed(2)}, humor=${mood.humor.toFixed(2)}.`,
+    lastUserMessages ? `Recent requests: ${lastUserMessages}` : '',
+    attachmentMessages ? `Attachments: ${attachmentMessages}` : '',
   ]
     .filter(Boolean)
     .join('\n');

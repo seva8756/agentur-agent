@@ -2,6 +2,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import type { RecentMessage } from '../../memory/recentMessages';
 import type { TrustedSkillPromptInfo } from '../../skills/trustedTypes';
 import type { ContextPolicy } from './policy';
+import type { PromptLocale } from '../../memory/chatSettings';
 
 export type ContextBudgetConfig = {
   contextWindowTokens: number;
@@ -11,6 +12,7 @@ export type ContextBudgetConfig = {
 
 export type ContextBuildOptions = ContextBudgetConfig & {
   timezone: string;
+  defaultLocale?: PromptLocale;
   currentThreadId?: number;
   trustedSkills?: TrustedSkillPromptInfo[];
 };

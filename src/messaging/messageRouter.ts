@@ -43,7 +43,7 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
   }
   logger.info('Received chat message', { provider: message.provider, chatId: message.chatId, chatType: message.chatType, messageId: message.messageId });
 
-  const settings = await readChatSettings(deps.store);
+  const settings = await readChatSettings(deps.store, deps.config.defaultLocale);
   const enabledSkills = await loadEnabledSkills(deps.store);
   const skillMatch = matchSkill(message, enabledSkills);
   const decision = decideReply(message, deps.botUsername, Boolean(skillMatch));
@@ -58,8 +58,7 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
     logger.info('Message ignored without storage', { chatId: message.chatId, reason: decision.reason });
   }
 
-  // Один раз строим LLM-текст: stripped + цитата (если это reply).
-  // Скиллы и команды используют message.text напрямую — им цитата не нужна.
+  // Build the LLM text once: stripped input plus quoted-message context.
   const strippedText = stripBotAddress(message.text, deps.botUsername);
   const llmInput = buildLlmInput(message, strippedText);
 
@@ -94,12 +93,12 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
 
   if (!decision.shouldReply) {
     if (smartMode) {
-      // Smart-режим тоже видит цитату — иначе "что это" без контекста непонятно
+      // Smart mode needs the quoted context as well.
       const smart = await decideSmartReply(deps.store, { ...message, text: llmInput }, deps.llm);
       if (smart.shouldReply) {
         logger.info('Replying to message', { chatId: message.chatId, reason: `smart:${smart.reason}` });
         deps.onReplyExpected?.();
-        return createAgentReply(message, llmInput, strippedText, deps);
+        return createAgentReply(message, llmInput, strippedText, deps, settings.locale);
       }
       logger.info('Smart mode stayed silent', { chatId: message.chatId, reason: smart.reason });
     }
@@ -112,7 +111,7 @@ export async function routeMessage(message: ChatMessage, deps: RouterDeps): Prom
   logger.info('Replying to message', { chatId: message.chatId, reason: decision.reason });
 
   deps.onReplyExpected?.();
-  return createAgentReply(message, llmInput, strippedText, deps);
+  return createAgentReply(message, llmInput, strippedText, deps, settings.locale);
 }
 
 function buildLlmInput(message: ChatMessage, strippedText: string): string {
@@ -120,22 +119,23 @@ function buildLlmInput(message: ChatMessage, strippedText: string): string {
     const { text, authorName } = message.quotedMessage!;
     const truncated = text.length > REPLY_QUOTE_MAX_CHARS ? `${text.slice(0, REPLY_QUOTE_MAX_CHARS)}…` : text;
     const attribution = authorName ? `${authorName}: ` : '';
-    return `[цитата: ${attribution}"${truncated}"]`;
+    return `[quoted message: ${attribution}"${truncated}"]`;
   })() : undefined;
   const quotedImageHint = message.quotedImage
-    ? '[К цитируемому сообщению приложено изображение; оно передано модели отдельно.]'
+    ? '[An image is attached to the quoted message and was provided to the model separately.]'
     : undefined;
   const fileHint = message.attachments?.some((attachment) => attachment.kind === 'file')
-    ? '[Текстовое содержимое приложенного файла доступно через grep_chat в /chat/attachments.]'
+    ? '[The text content of the attached file is available through grep_chat in /chat/attachments.]'
     : undefined;
   return [quote, quotedImageHint, strippedText, fileHint].filter(Boolean).join('\n');
 }
 
-async function createAgentReply(message: ChatMessage, llmInput: string, strippedText: string, deps: RouterDeps): Promise<SkillRunResult | null> {
+async function createAgentReply(message: ChatMessage, llmInput: string, strippedText: string, deps: RouterDeps, locale: import('../memory/chatSettings').PromptLocale): Promise<SkillRunResult | null> {
   const toolContext: ToolContext = {
     store: deps.store,
     scheduler: deps.scheduler,
     timezone: deps.config.agentTimezone,
+    locale,
     httpAllowedOrigins: deps.config.skillHttpAllowedOrigins,
     httpBlockedHosts: deps.config.httpBlockedHosts,
     httpAllowedPrivateHosts: deps.config.httpAllowedPrivateHosts,
@@ -151,11 +151,11 @@ async function createAgentReply(message: ChatMessage, llmInput: string, stripped
     images: [
       ...(message.quotedImage ? [{
         dataUrl: message.quotedImage.dataUrl,
-        description: 'Это изображение принадлежит цитируемому сообщению, а не текущему запросу.',
+        description: 'This image belongs to the quoted message, not the current request.',
       }] : []),
       ...(message.image ? [{
         dataUrl: message.image.dataUrl,
-        description: 'Это изображение принадлежит текущему сообщению пользователя.',
+        description: 'This image belongs to the current user message.',
       }] : []),
     ],
     config: deps.config,

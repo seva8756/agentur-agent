@@ -32,7 +32,7 @@ export async function buildChatContext(
   const [mood, identity, settings, summary, facts, decisions, recent, skills] = await Promise.all([
     readMood(store),
     readIdentity(store),
-    readChatSettings(store),
+    readChatSettings(store, options.defaultLocale),
     readSummary(store),
     listFacts(store),
     listDecisions(store),
@@ -40,8 +40,8 @@ export async function buildChatContext(
     loadEnabledSkills(store),
   ]);
 
-  const system = buildAgentSystemPrompt(mood, settings.profanityMode);
-  const identityPrompt = buildAgentIdentityPrompt(identity);
+  const system = buildAgentSystemPrompt(mood, settings.profanityMode, settings.locale);
+  const identityPrompt = buildAgentIdentityPrompt(identity, settings.locale);
   const time = buildCurrentTimePrompt(formatLocalTime(options.timezone), options.timezone);
   const skillsPrompt = [
     buildEnabledSkillsPrompt(skills, options.trustedSkills ?? []),

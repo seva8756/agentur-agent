@@ -62,7 +62,7 @@ export async function runToolLoop(params: {
       }
     }
   }
-  return 'Не смог завершить действие: достигнут лимит внутренних действий.';
+  return 'Could not complete the action: the internal action limit was reached.';
 }
 
 function fitToolObservationForLoop(

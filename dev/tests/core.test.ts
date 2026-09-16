@@ -129,6 +129,17 @@ function packageSkill(partial: Partial<SkillPackage> & {
 }
 
 describe('config', () => {
+  it('uses Russian as the default locale and accepts an English override', () => {
+    const base = {
+      TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHI',
+      TELEGRAM_ALLOWED_CHAT_ID: '-1001',
+      LLM_API_KEY: 'sk-test',
+      LLM_MODEL: 'test-model',
+    };
+    expect(loadConfig(base).defaultLocale).toBe('ru');
+    expect(loadConfig({ ...base, AGENT_DEFAULT_LOCALE: 'en' }).defaultLocale).toBe('en');
+  });
+
   it('limits Telegram send payload items to the Telegram maximum', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiny-agent-config-'));
     const config = testConfig(dir);
@@ -441,7 +452,7 @@ describe('reply attachments', () => {
       },
     });
     expect(skillResultText(reply)).toContain('На изображении');
-    expect(content).toContain('цитируемому сообщению');
+    expect(content).toContain('quoted message');
     expect(content).toContain('image_url');
     expect(content).toContain('data:image/png;base64,AAAA');
   });
@@ -667,7 +678,7 @@ describe('context budget', () => {
     });
     expect(String(context.messages[1]?.content)).toContain('Current local time');
     expect(String(context.messages[1]?.content)).toContain('Europe/Moscow');
-    expect(String(context.messages[0]?.content)).toContain('Mood diary');
+    expect(String(context.messages[0]?.content)).toContain('Настроение чата');
     expect(String(context.messages[0]?.content)).toContain('tension=0.70');
     expect(String(context.messages[0]?.content)).toContain('Шутки лучше минимизировать');
     expect(formatLocalTime('Europe/Moscow').length).toBeGreaterThan(10);
@@ -689,8 +700,28 @@ describe('context budget', () => {
       replyMaxTokens: 900,
       timezone: 'Europe/Moscow',
     });
-    expect(String(context.messages[0]?.content)).toContain('Language mode: uncensored');
     expect(String(context.messages[0]?.content)).toContain('Мат разрешён');
+    expect(String(context.messages[0]?.content)).toContain('Мат разрешён');
+  });
+
+  it('switches the chat prompt and command UI to English', async () => {
+    const { store, config, scheduler } = await tempStore();
+    const deps = {
+      store,
+      config,
+      scheduler,
+      llm: { chat: async () => 'ok', minimalCheck: async () => 'ok', toolCheck: async () => false },
+    };
+    expect(await handleAgentCommand('/agentur language en', deps)).toContain('English');
+    expect((await readChatSettings(store)).locale).toBe('en');
+    expect(await handleAgentCommand('/agentur help', deps)).toContain('command list');
+    const context = await buildChatContext(store, 'hello', {
+      contextWindowTokens: 32000,
+      contextBudgetTokens: 12000,
+      replyMaxTokens: 900,
+      timezone: 'Europe/Moscow',
+    });
+    expect(String(context.messages[0]?.content)).toContain('Reply in English');
   });
 
   it('includes usernames in recent chat context for mentions', async () => {
@@ -1691,7 +1722,7 @@ describe('skills', () => {
     });
 
     expect(skillResultText(await runSkill(store, skill, msg({ text: '/helper hello' })))).toBe('helper:HELLO');
-    expect(skillResultText(await runSkillTool(store, skill, 'formatReply', { value: 'hello' }, msg({ text: '/helper hello' })))).toContain('не содержит tool');
+    expect(skillResultText(await runSkillTool(store, skill, 'formatReply', { value: 'hello' }, msg({ text: '/helper hello' })))).toContain('does not contain tool');
   });
 
   it('rejects scripted media send results with non-public URLs', async () => {
@@ -1708,7 +1739,7 @@ describe('skills', () => {
       version: 1,
       createdAt: new Date().toISOString(),
     });
-    expect(skillResultText(await runSkill(store, skill, msg({ text: '/unsafe' })))).toBe('Навык Unsafe Media Sender не выполнился.');
+    expect(skillResultText(await runSkill(store, skill, msg({ text: '/unsafe' })))).toBe('Skill Unsafe Media Sender did not complete.');
   });
 
   it('lets scripted skills delete scoped storage keys', async () => {
@@ -1807,7 +1838,7 @@ describe('skills', () => {
         httpMaxRequestBytes: 5,
         httpMaxResponseBytes: 1024,
       });
-      expect(skillResultText(reply)).toBe('Навык Scripted Oversized HTTP Body не выполнился.');
+      expect(skillResultText(reply)).toBe('Skill Scripted Oversized HTTP Body did not complete.');
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.stubGlobal('fetch', originalFetch);
@@ -1846,7 +1877,8 @@ describe('skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Создан навык');
+    expect(result).toContain('"ok":true');
+    expect(result).toContain('"id":"echo_script"');
     const skills = await loadSkills(store);
     expect(skills).toHaveLength(1);
     expect(skills[0]?.description).toBe('Use when the user asks to echo text.');
@@ -1868,8 +1900,8 @@ describe('skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Триггеры: semantic only');
-    expect(result).toContain('Если нужна отдельная Telegram-команда');
+    expect(result).toContain('"triggers":[]');
+    expect(result).toContain('semantic selection');
     const skills = await loadSkills(store);
     expect(skills[0]?.triggers).toEqual([]);
   });
@@ -1890,7 +1922,7 @@ describe('skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Создан навык');
+    expect(result).toContain('"ok":true');
     const [skill] = await loadSkills(store);
     expect(skill?.triggers).toEqual([
       { type: 'command', command: 'balance', tool: 'check' },
@@ -1949,7 +1981,7 @@ describe('skills', () => {
       },
       { store, timezone: 'Europe/Moscow' },
     );
-    expect(result).toContain('Создан навык');
+    expect(result).toContain('"ok":true');
     const [skill] = await loadSkills(store);
     expect(skill?.triggers).toEqual([{ type: 'command', command: 'inspect', tool: 'inspect' }]);
   });
@@ -2183,7 +2215,7 @@ describe('tool loop', () => {
       context: { store: (await tempStore()).store, timezone: 'UTC' },
       maxSteps: 2,
     });
-    expect(result).toContain('лимит');
+    expect(result).toContain('internal action limit');
   });
 
   it('returns structured validation errors to the model when tool arguments are invalid', async () => {
@@ -2467,7 +2499,7 @@ describe('tool schemas', () => {
       { httpAllowedOrigins: [], httpTimeoutMs: 100 },
     );
     expect(skillResultText(reply)).toContain('item=hello user=seva');
-    expect(skillResultText(reply)).toContain('заблокирован настройками безопасности');
+    expect(skillResultText(reply)).toContain('blocked by security settings');
   });
 
   it('allows wildcard HTTP origins with response size limits', async () => {
@@ -2532,7 +2564,7 @@ describe('tool schemas', () => {
       httpMaxRequestBytes: 5,
       httpMaxResponseBytes: 1024,
     });
-    expect(skillResultText(reply)).toContain('тело запроса больше 5 байт');
+    expect(skillResultText(reply)).toContain('HTTP request body exceeds 5 bytes');
   });
 });
 

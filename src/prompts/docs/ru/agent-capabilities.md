@@ -24,6 +24,7 @@
 
 - Справка: `/agentur help`.
 - Состояние и диагностика: `/agentur status`, `/agentur doctor`.
+- Язык: `/agentur language ru` или `/agentur language en`.
 - Режим ответа: `/agentur reply-mode [called|smart]`.
 - Режим речи: `/agentur censor-mode [on|off]`.
 - Характер и память: `/agentur identity`, `/agentur mood`, `/agentur facts`, `/agentur decisions`.

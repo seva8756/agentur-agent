@@ -52,32 +52,32 @@ export const createSkillPackageTool: AgentTool<z.output<typeof argsSchema>> = {
     });
 
     const errors = validateScriptedSkill(skill);
-    if (errors.length) return `Навык отклонен: ${errors.join(', ')}`;
+    if (errors.length) return JSON.stringify({ ok: false, error: { code: 'skill_validation_failed', message: errors.join(', ') } });
     const effectiveOrigins = computeEffectiveHttpOrigins(skill.permissions.httpOrigins, context.httpAllowedOrigins ?? []);
     const blockedOrigin = skill.permissions.httpOrigins.find((origin) => !effectiveOrigins.includes('*') && !effectiveOrigins.includes(origin));
     if (blockedOrigin) {
-      return `HTTP-домен ${blockedOrigin} не разрешён настройками безопасности бота. Попроси администратора разрешить этот домен.`;
+      return JSON.stringify({ ok: false, error: { code: 'http_origin_not_allowed', message: `HTTP origin ${blockedOrigin} is not allowed by the agent security settings.` } });
     }
 
     const saved = await saveSkill(context.store, skill);
 
-    const lines = [
-      `Создан навык ${saved.id}.`,
-      '',
-      `Тулы: ${Object.keys(skill.tools).join(', ')}`,
-      `Триггеры: ${skill.triggers.length ? skill.triggers.map((trigger) => `/${trigger.command}->${trigger.tool}`).join(', ') : 'semantic only'}`,
-      `HTTP: ${skill.permissions.httpOrigins.length ? skill.permissions.httpOrigins.join(', ') : 'нет'}`,
-      `Секреты: ${skill.permissions.secrets.length ? skill.permissions.secrets.join(', ') : 'нет'}`,
-      '',
-      `Включите с помощью /agentur skill enable ${saved.id}`,
-    ];
-    if (!skill.triggers.length) {
-      lines.push('', 'Навык будет доступен по смысловому выбору агента. Если нужна отдельная Telegram-команда, её можно привязать к конкретному tool отдельной доработкой.');
-    }
-    if (skill.permissions.secrets.length > 0) {
-      lines.push('', 'Перед включением заполните секреты:', ...skill.permissions.secrets.map((key) => `/agentur secret set ${key} <значение>`));
-    }
-    return lines.join('\n');
+    return JSON.stringify({
+      ok: true,
+      skill: {
+        id: saved.id,
+        title: saved.title,
+        tools: Object.keys(skill.tools),
+        triggers: skill.triggers.map((trigger) => `/${trigger.command}->${trigger.tool}`),
+        httpOrigins: skill.permissions.httpOrigins,
+        secrets: skill.permissions.secrets,
+        enabled: false,
+      },
+      nextStep: `Ask the user to enable it with /agentur skill enable ${saved.id}.`,
+      notes: [
+        ...(!skill.triggers.length ? ['The skill is available through semantic selection; no slash command is configured.'] : []),
+        ...(skill.permissions.secrets.length ? [`The user must set required secrets before enabling: ${skill.permissions.secrets.join(', ')}.`] : []),
+      ],
+    });
   },
 };
 

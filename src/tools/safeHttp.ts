@@ -75,7 +75,7 @@ export async function safeHttpRequest(request: SafeHttpRequest, options: SafeHtt
   const maxRedirects = options.maxRedirects ?? 5;
 
   if (currentBody && Buffer.byteLength(currentBody, 'utf8') > options.maxRequestBytes) {
-    throw new SafeHttpError('request_body_too_large', `HTTP-действие заблокировано: тело запроса больше ${options.maxRequestBytes} байт`);
+    throw new SafeHttpError('request_body_too_large', `HTTP request body exceeds ${options.maxRequestBytes} bytes`);
   }
 
   const controller = new AbortController();
@@ -91,7 +91,7 @@ export async function safeHttpRequest(request: SafeHttpRequest, options: SafeHtt
       }
       if (!isOriginAllowed(parsed.origin, options.allowedOrigins)) {
         logger.warn('Blocked HTTP request to non-allowed origin', { origin: parsed.origin, url: currentUrl });
-        throw new SafeHttpError('origin_not_allowed', `HTTP request to origin '${parsed.origin}' is blocked by security settings (заблокирован настройками безопасности)`);
+        throw new SafeHttpError('origin_not_allowed', `HTTP request to origin '${parsed.origin}' is blocked by security settings`);
       }
 
       response = await fetch(currentUrl, {

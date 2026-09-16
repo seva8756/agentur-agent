@@ -2,6 +2,7 @@ import { AppConfig } from '../config';
 import { isLlmContextLengthError } from '../llm/errors';
 import type { LlmAdapter, LlmContextBudget } from '../llm/types';
 import { FileStore } from '../memory/fileStore';
+import { readChatSettings } from '../memory/chatSettings';
 import { SkillRunResult, skillResultText, textSkillResult } from '../skills/result';
 import { ToolRegistry } from '../tools/registry';
 import { ToolContext } from '../tools/types';
@@ -43,11 +44,13 @@ export async function generateAgentResult(params: {
 }): Promise<SkillRunResult | null> {
   const outbox: SkillRunResult[] = [];
   const toolContext = { ...params.toolContext, outbox };
+  const settings = await readChatSettings(params.store, params.config.defaultLocale);
   const context = await buildChatContext(params.store, params.input, {
     contextWindowTokens: params.config.contextWindowTokens,
     contextBudgetTokens: params.config.contextBudgetTokens,
     replyMaxTokens: params.config.replyMaxTokens,
     timezone: params.config.agentTimezone,
+    defaultLocale: params.config.defaultLocale,
     currentThreadId: toolContext.currentMessage?.threadId,
     trustedSkills: params.toolContext.trustedSkills ?? [],
   });
@@ -70,7 +73,8 @@ export async function generateAgentResult(params: {
     };
     return withModelMediaCaption(result, modelReply);
   }
-  const reply = modelReply || limitOutput('Не нашёл, что ответить.', replyCharsFallback(params.config.replyMaxTokens));
+  const fallbackReply = settings.locale === 'en' ? 'I could not find a suitable answer.' : 'Не нашёл, что ответить.';
+  const reply = modelReply || limitOutput(fallbackReply, replyCharsFallback(params.config.replyMaxTokens));
   return textSkillResult(reply);
 }
 
@@ -118,12 +122,13 @@ async function chatWithFallbacks(
     const reason = humanErrorReason(error);
     const fallbackContext = await buildChatContext(
       params.store,
-      buildImageInputFailureUserPrompt(params.input, reason),
+      buildImageInputFailureUserPrompt(params.input, reason, (await readChatSettings(params.store, params.config.defaultLocale)).locale),
       {
         contextWindowTokens: params.config.contextWindowTokens,
         contextBudgetTokens: params.config.contextBudgetTokens,
         replyMaxTokens: params.config.replyMaxTokens,
         timezone: params.config.agentTimezone,
+        defaultLocale: params.config.defaultLocale,
         currentThreadId: params.toolContext.currentMessage?.threadId,
         trustedSkills: params.toolContext.trustedSkills ?? [],
       },
@@ -177,7 +182,7 @@ function stripImageInputs(messages: Awaited<ReturnType<typeof buildChatContext>>
       ...message,
       content: [
         ...textParts,
-        '[Изображение было опущено: предыдущий запрос превысил лимит контекста модели.]',
+        '[Image omitted: the previous request exceeded the model context limit.]',
       ].join('\n'),
     } as typeof message;
   });
