@@ -8,7 +8,7 @@ import type { SkillRunResult } from './result';
 export type TrustedSkillManifest = {
   id: string;
   title: string;
-  whenToUse?: string;
+  description: string;
   enabled: boolean;
   runtime: 'native';
   source: 'system';

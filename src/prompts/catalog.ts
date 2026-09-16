@@ -24,7 +24,7 @@ export const TOOL_PROMPTS = {
       'Create a disabled cron reminder draft from natural language. Use ASCII id with cron_ prefix if possible; if unsure omit id. The action must be an object. Supported actions: send_static_message, ask_agent_and_send, run_skill_tool with skillId/toolName/args/text/sendResult. User enables it with /agentur cron enable <id>.',
   },
   createSkillPackage: {
-    whenToUse: 'Required routing guidance: when the agent should use this skill, and when it should not. Be specific enough to avoid broad accidental activation.',
+    describeDescription: 'Required routing guidance for the skill-level description field: when the agent should use this skill, and when it should not. Be specific enough to avoid broad accidental activation.',
     skillMd: 'SKILL.md instructions for when and how to use this skill',
     pluginJs: 'Sandbox plugin.js. Export one object: { helper(){...}, tools:{ toolName(ctx,args){...} } }. Only tools.* are public; root helpers are private and called as this.helper(). Do not define helpers outside the exported object. Use ctx.api for SDK calls.',
     tools: 'Tool specs exposed by plugin.js',
@@ -40,7 +40,7 @@ export const TOOL_PROMPTS = {
       'Artifact/file contract: create files with ctx.api.artifacts.createText({filename,mimeType,text}) or createBase64({filename,mimeType,base64}); return deliverable files as send:[{kind:"file", source:{type:"artifact", artifactId: artifact.id}, caption?, filename?}]. For images use kind:"photo"; for videos use kind:"video". Never use kind:"artifact".',
       'Tiny example: export default {tools:{async check(ctx,args){const key=ctx.api.secrets.get("KEY"); const res=await ctx.api.http.get("https://example.com/api",{headers:{Authorization:"Bearer "+key}}); const value=res.json&&res.json.value!==undefined?res.json.value:res.text; return {ok:true, reply:String(value)}}}};',
       'No Node.js APIs, no fs/process/require/import/fetch/eval/Function.',
-      'Default to triggers: [] so natural-language requests are selected semantically through whenToUse. A skill does not need a Telegram command to be usable.',
+      'Default to triggers: [] so natural-language requests are selected semantically through the skill-level description. A skill does not need a Telegram command to be usable.',
       'Create command triggers only when the user explicitly asks to bind a slash command such as /balance. Do not create one command per tool by default.',
       'Do not invent convenience commands for skills. Do not create phrase/keyword/contains/message_contains triggers.',
       'For MCP/helper skills, prefer returning structured data/errors instead of raw JSON user-facing replies; let the LLM compose the final answer on semantic calls.',
@@ -215,10 +215,10 @@ export function buildEnabledSkillsPrompt(skills: SkillPackage[], trustedSkills: 
   if (!skills.length && !trustedSkills.length) return '';
   return [
     'Enabled skill inventory for semantic selection.',
-    'Use this inventory only to choose likely skills. It is intentionally compact: id, title, when_to_use, and slash command triggers.',
+    'Use this inventory only to choose likely skills. It is intentionally compact: id, title, description, and slash command triggers.',
     'For chat-generated skills, if the user request matches an inventory item, first call `list_skill_packages` with that skill id/title to fetch full SKILL.md, triggers, tool names, and tool descriptions; then call `run_skill_tool` with the concrete skill and tool.',
     'Trusted native skill tools are available as direct tools; call their concrete tool names directly instead of `run_skill_tool`.',
-    'Use skill tools only when the title or when_to_use clearly fits the user request.',
+    'Use skill tools only when the title or description clearly fits the user request.',
     'If multiple skill tools are needed, call each relevant tool and compose the final answer from their structured results.',
     'A skill result with reply=null means the tool completed but has nothing to say; do not treat it as an error.',
     'A skill result with data is machine-readable context for later tool calls.',
@@ -334,14 +334,13 @@ function buildMoodGuidance(mood: Mood): string {
 
 // Форматирует trusted native skill в компактную строку inventory для модели.
 function formatTrustedSkillForPrompt(skill: TrustedSkillPromptInfo): string {
-  const whenToUse = skill.manifest.whenToUse ?? 'not specified';
-  return `- trusted_skill=${skill.manifest.id}; title=${skill.manifest.title}; when_to_use=${whenToUse}; runtime=native`;
+  return `- trusted_skill=${skill.manifest.id}; title=${skill.manifest.title}; description=${skill.manifest.description}; runtime=native`;
 }
 
 // Форматирует chat-generated skill в компактную строку inventory для модели.
 function formatSkillForPrompt(skill: SkillPackage): string {
   const triggers = formatCompactTriggers(skill);
-  return `- skill=${skill.id}; title=${skill.title}; when_to_use=${skill.whenToUse}; triggers=${triggers}`;
+  return `- skill=${skill.id}; title=${skill.title}; description=${skill.description}; triggers=${triggers}`;
 }
 
 // Сжимает slash-command triggers навыка до короткого списка для inventory.

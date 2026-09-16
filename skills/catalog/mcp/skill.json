@@ -1,7 +1,7 @@
 {
   "id": "mcp",
   "title": "MCP",
-  "whenToUse": "Use when the user asks to inspect or act through MCP servers connected in this chat, such as GitLab, GitHub, Figma, docs, issue trackers, repositories, or other external tools exposed through MCP.",
+  "description": "Use when the user asks to inspect or act through MCP servers connected in this chat, such as GitLab, GitHub, Figma, docs, issue trackers, repositories, or other external tools exposed through MCP.",
   "enabled": true,
   "runtime": "native",
   "source": "system",

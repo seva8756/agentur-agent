@@ -22,7 +22,7 @@ export const skillPermissionsSchema = z.object({
 export const skillPackageManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9_-]+$/i),
   title: z.string().min(1),
-  whenToUse: z.string().min(1).max(1000),
+  description: z.string().min(1).max(1000),
   enabled: z.boolean().default(false),
   runtime: z.enum(['quickjs', 'native']).default('quickjs'),
   source: z.enum(['chat_generated', 'system']).default('chat_generated'),
@@ -37,7 +37,7 @@ export const skillPackageManifestSchema = z.object({
 // Identity and lifecycle fields deliberately remain owned by the live package.
 export const skillRollbackManifestSchema = skillPackageManifestSchema.pick({
   title: true,
-  whenToUse: true,
+  description: true,
   runtime: true,
   triggers: true,
   tools: true,

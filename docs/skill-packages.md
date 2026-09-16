@@ -42,6 +42,7 @@ Enable делает validation/dry-run и меняет `enabled` на `true`.
 {
   "id": "shopping_list",
   "title": "Shopping List",
+  "description": "Use when the user asks to add, remove, or view shopping-list items; do not use for unrelated tasks.",
   "enabled": false,
   "runtime": "quickjs",
   "source": "chat_generated",
@@ -88,14 +89,14 @@ Enable делает validation/dry-run и меняет `enabled` на `true`.
 - прямые triggers поддерживают только явные slash-команды, например `/balance`;
 - command-trigger создается только когда пользователь явно попросил привязать slash-команду к конкретному tool;
 - каждый trigger обязан ссылаться на существующий tool;
-- natural-language активация идет через `whenToUse` и semantic selection, а не через phrase/keyword triggers;
+- natural-language активация идет через `description` и semantic selection, а не через phrase/keyword triggers;
 - `httpOrigins` должны быть точными origins, например `https://openrouter.ai`;
 - secrets нужно объявлять явно.
 
 Примеры:
 
 - хороший command trigger: пользователь явно попросил `/denis_tasks`, и команда всегда собирает конкретный отчет;
-- хороший semantic-only skill: GitLab helper с `triggers: []` и точным `whenToUse`;
+- хороший semantic-only skill: GitLab helper с `triggers: []` и точным `description`;
 - плохой command trigger: `/gitlab`, если внутри skill сам угадывает, что пользователь хотел сделать.
 
 ## SKILL.md
@@ -485,5 +486,5 @@ SKILL_HTTP_ALLOWED_ORIGINS=https://openrouter.ai
 - Updating a skill expecting more than one revision to be retained.
 - Returning a string instead of `{ reply: "..." }`.
 - Using `module.exports`; prefer `export default`.
-- Creating command triggers for broad/agentic skills instead of using `triggers: []` and `whenToUse`.
+- Creating command triggers for broad/agentic skills instead of using `triggers: []` and `description`.
 - Returning raw JSON dumps or low-level integration errors as `reply`; prefer structured `data`/`error` and let the LLM compose semantic answers.

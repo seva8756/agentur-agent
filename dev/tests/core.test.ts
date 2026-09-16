@@ -124,7 +124,7 @@ function packageSkill(partial: Partial<SkillPackage> & {
     skillMd: `# ${partial.title}`,
     pluginJs: `export default { tools: { async ${firstTool}(ctx, args) { return { ok: true, reply: ctx.text }; } } };`,
     ...partial,
-    whenToUse: partial.whenToUse ?? `Use when the user asks for ${partial.title}.`,
+    description: partial.description ?? `Use when the user asks for ${partial.title}.`,
   });
 }
 
@@ -173,7 +173,7 @@ const skillSchema = {
     return packageSkill({
       id: value.id,
       title: value.title,
-      whenToUse: value.whenToUse,
+      description: value.description,
       enabled: value.enabled ?? false,
       triggers: trigger ? [trigger] : [],
       tools: { [toolName]: { description: value.title, schema: { type: 'object', properties: {} } } },
@@ -1051,7 +1051,7 @@ describe('context budget', () => {
     await saveSkill(store, skillSchema.parse({
       id: 'jsonbin_fetch',
       title: 'Fetch JSONBin data',
-      whenToUse: 'Use when the user asks to fetch or show JSONBin data.',
+      description: 'Use when the user asks to fetch or show JSONBin data.',
       enabled: false,
       trigger: { type: 'command', command: 'jsonbin' },
       action: { type: 'reply_static', text: 'json' },
@@ -1071,7 +1071,7 @@ describe('context budget', () => {
             typeof message.content === 'string'
             && message.content.includes('run_skill_tool')
             && message.content.includes('jsonbin_fetch')
-            && message.content.includes('when_to_use=Use when the user asks to fetch or show JSONBin data.')
+            && message.content.includes('description=Use when the user asks to fetch or show JSONBin data.')
           );
           return 'ok';
         },
@@ -1278,13 +1278,13 @@ describe('trusted skill instructions', () => {
       timezone: 'Europe/Moscow',
       trustedSkills: [{
         manifest: {
-          id: 'mcp', title: 'MCP', enabled: true, runtime: 'native', source: 'system',
+          id: 'mcp', title: 'MCP', description: 'Use MCP tools for connected services.', enabled: true, runtime: 'native', source: 'system',
           version: 1, triggers: [], tools: {}, createdAt: '2026-06-03T00:00:00.000Z',
         },
         skillMd: 'Use MCP tools for connected services.',
       }, {
         manifest: {
-          id: 'disabled', title: 'Disabled', enabled: false, runtime: 'native', source: 'system',
+          id: 'disabled', title: 'Disabled', description: 'Disabled test skill.', enabled: false, runtime: 'native', source: 'system',
           version: 1, triggers: [], tools: {}, createdAt: '2026-06-03T00:00:00.000Z',
         },
         skillMd: 'Should not be exposed.',
@@ -1402,7 +1402,7 @@ describe('skills', () => {
       id: 'weather',
       title: 'Weather v1',
       enabled: true,
-      whenToUse: 'Use for the current weather.',
+      description: 'Use for the current weather.',
       skillMd: '# Weather v1',
       pluginJs: 'export default { tools: { async current() { return { ok: true, reply: "v1" }; } } };',
       tools: { current: { description: 'Get current weather', schema: { type: 'object', properties: {} } } },
@@ -1412,7 +1412,7 @@ describe('skills', () => {
     await saveSkill(store, {
       ...original,
       title: 'Weather v2',
-      whenToUse: 'Use for the forecast.',
+      description: 'Use for the forecast.',
       enabled: false,
       skillMd: '# Weather v2',
       pluginJs: 'export default { tools: { async forecast() { return { ok: true, reply: "v2" }; } } };',
@@ -1835,7 +1835,7 @@ describe('skills', () => {
     const result = await createSkillPackageTool.execute(
       {
         title: 'Echo Script',
-        whenToUse: 'Use when the user asks to echo text.',
+        description: 'Use when the user asks to echo text.',
         skillMd: '# Echo Script\n\nUse when the user asks to echo text.',
         pluginJs: 'export default { tools: { async echo(ctx) { return { ok: true, reply: ctx.text }; } } };',
         tools: { echo: { description: 'Echo text', schema: { type: 'object', properties: {} } } },
@@ -1849,7 +1849,7 @@ describe('skills', () => {
     expect(result).toContain('Создан навык');
     const skills = await loadSkills(store);
     expect(skills).toHaveLength(1);
-    expect(skills[0]?.whenToUse).toBe('Use when the user asks to echo text.');
+    expect(skills[0]?.description).toBe('Use when the user asks to echo text.');
   });
 
   it('keeps skill drafts semantic-only by default and mentions optional command binding', async () => {
@@ -1857,7 +1857,7 @@ describe('skills', () => {
     const result = await createSkillPackageTool.execute(
       {
         title: 'Semantic Echo',
-        whenToUse: 'Use when the user asks to echo text.',
+        description: 'Use when the user asks to echo text.',
         skillMd: '# Semantic Echo\n\nUse when the user asks to echo text.',
         pluginJs: 'export default { tools: { async echo(ctx) { return { ok: true, reply: ctx.text }; } } };',
         tools: { echo: { description: 'Echo text', schema: { type: 'object', properties: {} } } },
@@ -1879,7 +1879,7 @@ describe('skills', () => {
     const result = await createSkillPackageTool.execute(
       {
         title: 'Balance Check',
-        whenToUse: 'Use when the user asks for balance.',
+        description: 'Use when the user asks for balance.',
         skillMd: '# Balance Check\n\nUse when the user asks for balance.',
         pluginJs: 'export default { tools: { async check() { return { ok: true, reply: "ok" }; } } };',
         tools: { check: { description: 'Check balance', schema: { type: 'object', properties: {} } } },
@@ -1903,7 +1903,7 @@ describe('skills', () => {
     await expect(createSkillPackageTool.execute(
       {
         title: 'Balance Check',
-        whenToUse: 'Use when the user asks for balance.',
+        description: 'Use when the user asks for balance.',
         skillMd: '# Balance Check\n\nUse when the user asks for balance.',
         pluginJs: 'export default { tools: { async check() { return { ok: true, reply: "ok" }; } } };',
         tools: { check: { description: 'Check balance', schema: { type: 'object', properties: {} } } },
@@ -1938,7 +1938,7 @@ describe('skills', () => {
     const result = await createSkillPackageTool.execute(
       {
         title: 'Loose Trigger',
-        whenToUse: 'Use when the user asks for a loose trigger test.',
+        description: 'Use when the user asks for a loose trigger test.',
         skillMd: '# Loose Trigger\n\nUse when testing loose triggers.',
         pluginJs: 'export default { tools: { async inspect() { return { ok: true, reply: "ok" }; } } };',
         tools: { inspect: { description: 'Inspect', schema: { type: 'object', properties: {} } } },

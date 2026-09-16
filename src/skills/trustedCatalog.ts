@@ -9,7 +9,7 @@ import { TrustedSkill, TrustedSkillManifest, TrustedSkillPromptInfo } from './tr
 const manifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9_-]+$/i),
   title: z.string().min(1),
-  whenToUse: z.string().min(1).max(1000).optional(),
+  description: z.string().min(1).max(1000),
   enabled: z.boolean().default(true),
   runtime: z.literal('native'),
   source: z.literal('system'),

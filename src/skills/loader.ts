@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { z } from 'zod';
 import { FileStore } from '../memory/fileStore';
 import { ChatMessage } from '../messaging/types';
 import { formatLogError, logger } from '../utils/logger';
@@ -86,7 +85,7 @@ async function saveRevision(store: FileStore, skill: SkillPackage): Promise<void
 async function loadRevision(store: FileStore, current: SkillPackage): Promise<SkillPackage | null> {
   const version = (await listRevisions(store, current.id))[0];
   if (!version) return null;
-  const snapshot = await store.readJson(z.union([skillRollbackManifestSchema, z.null()]), null, 'skills', CUSTOM_SKILLS_DIR, current.id, 'revisions', revisionDirName(version), 'snapshot.json');
+  const snapshot = await store.readJson(skillRollbackManifestSchema.nullable(), null, 'skills', CUSTOM_SKILLS_DIR, current.id, 'revisions', revisionDirName(version), 'snapshot.json');
   if (!snapshot) return null;
   const [skillMd, pluginJs] = await Promise.all([
     store.readText('', 'skills', CUSTOM_SKILLS_DIR, current.id, 'revisions', revisionDirName(version), 'SKILL.md'),

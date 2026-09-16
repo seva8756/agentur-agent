@@ -16,7 +16,7 @@ const looseTriggerSchema = z.union([triggerSchema, z.string().min(1), z.record(z
 const argsSchema = z.object({
   id: z.string().min(1).optional(),
   title: z.string().min(1),
-  whenToUse: z.string().min(1).max(1000).describe(TOOL_PROMPTS.createSkillPackage.whenToUse),
+  description: z.string().min(1).max(1000).describe(TOOL_PROMPTS.createSkillPackage.describeDescription),
   skillMd: z.string().min(1).describe(TOOL_PROMPTS.createSkillPackage.skillMd),
   pluginJs: z.string().min(1).max(12000).describe(TOOL_PROMPTS.createSkillPackage.pluginJs),
   tools: z.record(z.string(), toolSpecSchema).describe(TOOL_PROMPTS.createSkillPackage.tools),
@@ -34,7 +34,7 @@ export const createSkillPackageTool: AgentTool<z.output<typeof argsSchema>> = {
     const skill = skillPackageSchema.parse({
       id: toAsciiSlug(args.id ?? args.title, `skill_${crypto.randomUUID().slice(0, 8)}`),
       title: args.title,
-      whenToUse: args.whenToUse,
+      description: args.description,
       enabled: false,
       runtime: 'quickjs',
       source: 'chat_generated',
