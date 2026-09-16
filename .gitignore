@@ -6,5 +6,6 @@ data/
 .DS_Store
 coverage/
 .idea/
-.*/
+.cursor/
+.vscode/
 graphify-out/

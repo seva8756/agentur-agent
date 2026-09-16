@@ -1,0 +1,92 @@
+# Пример конфигурации
+
+[English](../../.env.example) | **Русский**
+
+```dotenv
+# --- Настройки Telegram ---
+# Токен вашего Telegram-бота (получается у @BotFather)
+TELEGRAM_BOT_TOKEN=
+# Ограничение доступа по чатам. Можно указать один ID или несколько через запятую. Пусто = доступны все чаты. Память каждого чата всегда изолирована
+TELEGRAM_ALLOWED_CHAT_ID=
+# Юзернейм бота без символа @. Пусто = определится автоматически при запуске через getMe
+TELEGRAM_BOT_USERNAME=
+# ID чатов через запятую для сохранения всех обрабатываемых сообщений. * = все чаты. При пустом значении режим called сохраняет обращения, команды и срабатывания навыков, а smart также сохраняет фоновую переписку
+TELEGRAM_FULL_CAPTURE_CHAT_IDS=
+
+# --- Настройки LLM ---
+# Базовый URL API (поддерживает OpenAI, OpenRouter, DeepSeek и любые OpenAI-совместимые API)
+LLM_BASE_URL=https://api.openai.com/v1
+# API-ключ от провайдера нейросети
+LLM_API_KEY=
+# Точный ID доступной модели у выбранного провайдера. Для действий агента нужна поддержка tool calling
+LLM_MODEL=
+# Поддерживает ли выбранная модель вызов функций/инструментов (Function Calling)
+LLM_SUPPORTS_TOOLS=true
+# Время ожидания ответа от API нейросети в миллисекундах
+LLM_TIMEOUT_MS=45000
+# Количество попыток повторного запроса к API при возникновении сетевых ошибок
+LLM_MAX_RETRIES=1
+# Дополнительные повторы LLM-запроса внутри tool loop перед fallback без инструментов
+LLM_TOOL_LOOP_RETRIES=1
+
+# --- Поведение агента ---
+# Путь к локальной директории для хранения данных (настройки, навыки, история, секреты)
+AGENT_DATA_DIR=./data
+# Временная зона IANA для планировщика и локального времени (например, Europe/Moscow)
+AGENT_TIMEZONE=Europe/Moscow
+# Язык новых чатов: ru или en. Меняется для конкретного чата командой /agentur language
+AGENT_DEFAULT_LOCALE=ru
+# Лимит шагов/итераций вызова инструментов за один раз (предотвращает зацикливание агента)
+AGENT_MAX_TOOL_STEPS=15
+# Максимальный вес изображения в байтах, принимаемого ботом из Telegram для анализа
+TELEGRAM_IMAGE_MAX_BYTES=5242880
+# Максимальный размер загружаемого документа в байтах
+TELEGRAM_ATTACHMENT_MAX_BYTES=5242880
+# Максимальное количество payload-элементов в одном ответе Telegram. Telegram media group limit: 10
+TELEGRAM_SEND_MAX_ITEMS=10
+
+# --- Управление контекстом ---
+# Жёсткий лимит окна выбранной модели: вход + ответ + safety reserve
+CONTEXT_WINDOW_TOKENS=32000
+# Рабочий бюджет текстового prompt. User может выйти выше него в свободную часть окна, память — нет
+CONTEXT_BUDGET_TOKENS=12000
+# Максимум токенов генерации ответа. Также резервируется в окне контекста
+REPLY_MAX_TOKENS=900
+# Лимит на количество сообщений, хранимых в файле истории recent.jsonl
+RECENT_MESSAGES_FILE_LIMIT=300
+# Сколько сообщений отправлять на суммаризацию при очистке и ротации логов истории
+MESSAGES_TO_SUMMARIZE_ON_ROTATION=200
+# Максимальный размер файла суммаризации чата summary.md в символах
+SUMMARY_FILE_MAX_CHARS=3000
+
+# --- Дневник настроения ---
+# Периодичность пересчета эмоциональной атмосферы и обновления дневника настроения (в сообщениях)
+MOOD_UPDATE_EVERY_MESSAGES=20
+# Периодичность суммаризации и очистки логов обращений в чатах не содержашихся в TELEGRAM_FULL_CAPTURE_CHAT_IDS
+INTERACTION_SUMMARY_EVERY_MESSAGES=50
+
+# --- Сетевые запросы из навыков (HTTP) ---
+# Разрешённые origins через запятую, например https://api.example.com (схема + хост + необязательный порт, без пути). Пусто = HTTP-запросы навыков и HTTP-инструмента агента отключены. * = любые публичные origins с учётом остальных проверок
+SKILL_HTTP_ALLOWED_ORIGINS=
+# Дополнительно запрещенные хосты через запятую. Сопоставление точное, без порта и без учета регистра
+HTTP_BLOCKED_HOSTS=
+# Явно разрешенные private/localhost хосты через запятую. Используйте только для доверенной внутренней инфраструктуры
+HTTP_ALLOWED_PRIVATE_HOSTS=
+# Максимальное время выполнения HTTP-запроса в миллисекундах
+SKILL_HTTP_TIMEOUT_MS=10000
+# Максимальный размер отправляемого тела запроса (body) в байтах
+SKILL_HTTP_MAX_REQUEST_BYTES=131072
+# Максимальный размер скачиваемого ответа от сервера в байтах
+SKILL_HTTP_MAX_RESPONSE_BYTES=1048576
+
+# --- Trusted MCP skill ---
+# Включает native trusted skill skills/catalog/mcp. Пусто/false = MCP tools не доступны модели
+MCP_ENABLED=false
+# MCP servers настраиваются только per-chat командами /agentur mcp ... и хранятся в integrations/mcp/servers.json
+# Timeout MCP операций
+MCP_TIMEOUT_MS=20000
+# Максимальный размер результата MCP tool/resource
+MCP_MAX_RESPONSE_BYTES=262144
+# DEV ONLY: отключает проверку TLS-сертификатов Node.js для внутренних/self-signed MCP endpoints. В проде оставлять пустым/не заданным.
+NODE_TLS_REJECT_UNAUTHORIZED=
+```

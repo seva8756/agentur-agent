@@ -1,16 +1,18 @@
 # Skills Guide
 
-Этот документ фиксирует актуальный контракт chat-local skills, чтобы не держать детали только в голове или в prompt descriptions.
+[English](skill-packages.md) | [Русский](ru/skill-packages.md)
 
-## Идея
+This document describes the current contract for chat-local skills, so the details are recorded outside of prompt descriptions and personal notes.
 
-Навык — это локальный skill внутри конкретного Telegram-чата. Технически он хранится как папка с `skill.json`, `SKILL.md` и `plugin.js`, но в интерфейсе и ответах пользователю называем его просто навыком.
+## Overview
 
-Для привилегированных интеграций вроде MCP используйте не chat-generated skills, а trusted skills из `skills/catalog/`. Пример: [trusted-mcp-skill-example.md](trusted-mcp-skill-example.md).
+A skill belongs to a particular Telegram chat. It is stored as a directory with `skill.json`, `SKILL.md`, and `plugin.js`, but in the interface and user-facing replies we simply call it a skill.
 
-Trusted skills исполняются native-кодом без QuickJS sandbox и включаются приложением, а не создаются агентом из чата. Первый такой skill: `skills/catalog/mcp`.
+For privileged integrations such as MCP, use trusted skills from `skills/catalog/`. Server connections and access permissions are described in the [integration guide](integrations.md#mcp).
 
-Структура:
+Trusted skills run as native code outside the QuickJS sandbox. They are enabled by the application, not created by the agent from a chat. The first such skill is `skills/catalog/mcp`.
+
+Structure:
 
 ```text
 data/chats/<chat>/skills/custom/<skill_id>/
@@ -24,19 +26,19 @@ data/chats/<chat>/skills/custom/<skill_id>/
       plugin.js
 ```
 
-`enabled` в `skill.json` — единственный флаг, определяющий, исполняет ли runtime skill. `revisions/v<version>/` содержит только одну сохранённую редакцию skill.
+The `enabled` flag in `skill.json` alone determines whether the runtime runs a skill. `revisions/v<version>/` holds only one saved revision of the skill.
 
-Новый skill создаётся выключенным. Чтобы включить его:
+New skills are created disabled. To enable one:
 
 ```text
 /agentur skill enable <skill_id>
 ```
 
-Enable делает validation/dry-run и меняет `enabled` на `true`.
+Enabling a skill validates it, runs a dry run, and sets `enabled` to `true`.
 
 ## skill.json
 
-Минимальный manifest:
+Minimal manifest:
 
 ```json
 {
@@ -81,68 +83,68 @@ Enable делает validation/dry-run и меняет `enabled` на `true`.
 }
 ```
 
-Правила:
+Rules:
 
-- `runtime` сейчас всегда `"quickjs"`;
-- `tools` должен содержать хотя бы один tool;
-- `triggers` по умолчанию должен быть `[]`: skill доступен агенту через semantic selection и не требует Telegram-команды;
-- прямые triggers поддерживают только явные slash-команды, например `/balance`;
-- command-trigger создается только когда пользователь явно попросил привязать slash-команду к конкретному tool;
-- каждый trigger обязан ссылаться на существующий tool;
-- natural-language активация идет через `description` и semantic selection, а не через phrase/keyword triggers;
-- `httpOrigins` должны быть точными origins, например `https://openrouter.ai`;
-- secrets нужно объявлять явно.
+- `runtime` is currently always `"quickjs"`;
+- `tools` must contain at least one tool;
+- `triggers` should be `[]` by default: the agent selects the skill based on its meaning, without requiring a Telegram command;
+- direct triggers support only explicit slash commands, such as `/balance`;
+- create a command trigger only when the user explicitly asks to bind a slash command to a particular tool;
+- each trigger must refer to an existing tool;
+- natural-language activation uses `description` and semantic selection, not phrase or keyword triggers;
+- `httpOrigins` must contain exact origins, such as `https://openrouter.ai`;
+- secrets must be declared explicitly.
 
-Примеры:
+Examples:
 
-- хороший command trigger: пользователь явно попросил `/denis_tasks`, и команда всегда собирает конкретный отчет;
-- хороший semantic-only skill: GitLab helper с `triggers: []` и точным `description`;
-- плохой command trigger: `/gitlab`, если внутри skill сам угадывает, что пользователь хотел сделать.
+- a good command trigger: the user explicitly requested `/denis_tasks`, and the command always produces a particular report;
+- a good skill selected by meaning alone: a GitLab helper with `triggers: []` and a precise `description`;
+- a poor command trigger: `/gitlab`, if the skill itself tries to guess what the user wants to do.
 
 ## SKILL.md
 
-`SKILL.md` описывает, когда и как использовать skill. Он попадает модели в context для enabled skills.
+`SKILL.md` describes when and how to use the skill. For enabled skills, it is included in the model's context.
 
-Пишите коротко:
+Keep it short:
 
 ```md
-Используй `add_item`, когда пользователь просит добавить покупку.
-Используй `list_items`, когда пользователь спрашивает текущий список покупок.
-Не используй навык для задач, не связанных со списком покупок.
+Use `add_item` when the user asks to add a shopping item.
+Use `list_items` when the user asks for the current shopping list.
+Do not use this skill for tasks unrelated to the shopping list.
 ```
 
 ## plugin.js
 
-Контракт:
+Contract:
 
 ```js
 export default {
   tools: {
     async tool_name(ctx, args) {
-      return { ok: true, reply: "Готово." };
+      return { ok: true, reply: "Done." };
     }
   }
 };
 ```
 
-SDK доступен только через `ctx.api`. Не используйте третий аргумент `api`.
+The SDK is available only through `ctx.api`. Do not use a third `api` argument.
 
-Нормальный пример:
+Example:
 
 ```js
 export default {
   tools: {
     async add_item(ctx, args) {
       const item = String(args.item || ctx.item || "").trim();
-      if (!item) return { ok: true, reply: "Что добавить?" };
+      if (!item) return { ok: true, reply: "What should I add?" };
 
       await ctx.api.lists.append("shopping", item);
-      return { ok: true, reply: "Добавил: " + item };
+      return { ok: true, reply: "Added: " + item };
     },
 
     async list_items(ctx, args) {
       const items = await ctx.api.lists.list("shopping");
-      if (!items.length) return { ok: true, reply: "Список пуст." };
+      if (!items.length) return { ok: true, reply: "The list is empty." };
       return {
         ok: true,
         reply: items.map((item, index) => (index + 1) + ". " + item.text).join("\n")
@@ -154,11 +156,11 @@ export default {
 
 ## ctx
 
-`ctx` содержит сообщение и окружение:
+`ctx` contains the message and its environment:
 
 ```js
-ctx.text          // полный текст сообщения
-ctx.item          // текст после slash-command
+ctx.text          // full message text
+ctx.item          // text after the slash command
 ctx.now           // ISO timestamp
 ctx.user.id
 ctx.user.username
@@ -170,20 +172,20 @@ ctx.message.date
 ctx.api           // SDK
 ```
 
-`ctx.item` удобен для command-trigger:
+`ctx.item` is useful for command triggers:
 
-- сообщение: `/todo купить молоко`;
-- `ctx.item`: `купить молоко`.
+- message: `/todo buy milk`;
+- `ctx.item`: `buy milk`.
 
-Для semantic calls через `run_skill_tool` используйте `args`; `ctx.item` может быть пустым или равным аргументам команды только при прямом slash-trigger.
+For calls selected by the model through `run_skill_tool`, use `args`. `ctx.item` may be empty; it contains the command arguments only for a direct slash trigger.
 
 ## args
 
-`args` приходит из LLM tool call через `run_skill_tool`.
+`args` comes from the LLM tool call through `run_skill_tool`.
 
-Если tool вызван прямым trigger без LLM, обычно `args` будет `{}`.
+If a tool is called by a direct trigger without the LLM, `args` is usually `{}`.
 
-Паттерн:
+Pattern:
 
 ```js
 const value = args.value || ctx.item || ctx.text;
@@ -193,7 +195,7 @@ const value = args.value || ctx.item || ctx.text;
 
 ### Storage
 
-Scoped per skill, файл `skills/state/<skill_id>.json`.
+Storage is scoped to each skill, in `skills/state/<skill_id>.json`.
 
 ```js
 const value = ctx.api.storage.get("key");
@@ -201,11 +203,11 @@ ctx.api.storage.set("key", value);
 ctx.api.storage.delete("key");
 ```
 
-`storage` синхронный.
+`storage` is synchronous.
 
 ### Lists
 
-Chat-level списки в `chat/lists/*.json`.
+Chat-level lists are stored in `chat/lists/*.json`.
 
 ```js
 const items = await ctx.api.lists.list("shopping");
@@ -216,13 +218,13 @@ await ctx.api.lists.clear("shopping");
 ### Memory
 
 ```js
-await ctx.api.memory.rememberFact("Пользователь любит короткие ответы.");
-await ctx.api.memory.saveDecision("Решили проверять отчеты по пятницам.");
+await ctx.api.memory.rememberFact("The user prefers short replies.");
+await ctx.api.memory.saveDecision("We agreed to review reports on Fridays.");
 ```
 
 ### Artifacts
 
-Artifacts — chat-local файлы, которые можно создать из skill и отправить через общий `send` контракт. Skill не получает прямой filesystem access: он создает файл через SDK и дальше передает только `artifactId`.
+Artifacts are chat-local files that a skill can create and send through the shared `send` contract. Skills do not have direct file system access: they create files through the SDK and then pass only the `artifactId`.
 
 ```js
 const artifact = await ctx.api.artifacts.createText({
@@ -236,12 +238,12 @@ return {
   send: {
     kind: "file",
     source: { type: "artifact", artifactId: artifact.id },
-    caption: "HTML готов"
+    caption: "HTML is ready"
   }
 };
 ```
 
-Для бинарников:
+For binary files:
 
 ```js
 const image = await ctx.api.artifacts.createBase64({
@@ -251,18 +253,18 @@ const image = await ctx.api.artifacts.createBase64({
 });
 ```
 
-`ctx.api.artifacts.get(artifactId)` читает metadata, `ctx.api.artifacts.readText(artifactId)` читает text-like artifacts с лимитом. Старый media payload с `url: "https://..."` остается валидным только для публичных http/https URL.
+`ctx.api.artifacts.get(artifactId)` reads metadata. `ctx.api.artifacts.readText(artifactId)` reads text-like artifacts with a size limit. The older media payload with `url: "https://..."` remains valid only for public HTTP(S) URLs.
 
 ### Secrets
 
-Только объявленные в `skill.json` secrets доступны skill.
+A skill can access only the secrets declared in `skill.json`.
 
 ```js
 const token = ctx.api.secrets.get("OPENROUTER_API_KEY");
-if (!token) return { ok: true, reply: "Нужен секрет OPENROUTER_API_KEY." };
+if (!token) return { ok: true, reply: "The OPENROUTER_API_KEY secret is required." };
 ```
 
-`secrets` синхронные.
+`secrets` is synchronous.
 
 ### HTTP
 
@@ -302,18 +304,18 @@ res.json
 res.url
 ```
 
-HTTP проходит через safe layer:
+HTTP requests pass through the safety layer:
 
-- только `http/https`;
-- origin должен быть в `skill.json.permissions.httpOrigins`;
-- origin должен быть разрешен глобально в `SKILL_HTTP_ALLOWED_ORIGINS`;
-- localhost/private IP запрещены;
-- redirects проверяются;
-- есть timeout и лимиты request/response body.
+- only `http/https`;
+- the origin must be listed in `skill.json.permissions.httpOrigins`;
+- the origin must also be allowed globally in `SKILL_HTTP_ALLOWED_ORIGINS`;
+- localhost and private IP addresses are blocked by default; explicit exceptions are set through `HTTP_ALLOWED_PRIVATE_HOSTS`, see [HTTP setup](integrations.md#http);
+- redirects are checked;
+- timeouts and request/response body size limits apply.
 
 ### MCP
 
-Обычные chat skills могут использовать только уже подключенные MCP servers этого чата:
+Regular chat skills can use only MCP servers already connected to that chat:
 
 ```js
 const servers = await ctx.api.mcp.listServers();
@@ -323,14 +325,14 @@ const result = await ctx.api.mcp.callTool("my_gitlab", "list_merge_requests", {
 });
 ```
 
-Доступные методы:
+Available methods:
 
 - `ctx.api.mcp.listServers()`;
 - `ctx.api.mcp.listTools(serverId?)`;
 - `ctx.api.mcp.callTool(serverId, toolName, args)`;
 - `ctx.api.mcp.readResource(serverId, uri)`.
 
-Нельзя подключать servers из `plugin.js`: нет `connect`, `spawn`, `setHeader`, `setSecret`. Подключение делается командами `/agentur mcp ...`, а исполнение всегда идет через trusted `McpManager`.
+You cannot connect servers from `plugin.js`: there is no `connect`, `spawn`, `setHeader`, or `setSecret`. Connections are configured with `/agentur mcp ...` commands, and execution always goes through the trusted `McpManager`.
 
 ### Log
 
@@ -338,7 +340,7 @@ const result = await ctx.api.mcp.callTool("my_gitlab", "list_merge_requests", {
 ctx.api.log("step=loaded");
 ```
 
-Logs попадают в `skills/audit/<skill_id>.jsonl`.
+Logs are written to `skills/audit/<skill_id>.jsonl`.
 
 ### Sleep
 
@@ -346,23 +348,23 @@ Logs попадают в `skills/audit/<skill_id>.jsonl`.
 await ctx.api.sleep(500);
 ```
 
-Sleep ограничен, не используйте его для долгих процессов.
+Sleep duration is limited. Do not use it for long-running processes.
 
 ## Result Contract
 
-Tool должен вернуть объект:
+A tool must return an object:
 
 ```js
 return {
   ok: true,
-  reply: "текст",
+  reply: "text",
   data: { any: "json" },
   send: undefined,
   error: undefined
 };
 ```
 
-Поля:
+Fields:
 
 - `ok?: boolean`;
 - `reply?: string | null`;
@@ -370,37 +372,37 @@ return {
 - `send?: media payload`;
 - `error?: { code: string, message: string }`.
 
-Примеры:
+Examples:
 
 ```js
-return { ok: true, reply: "Готово." };
+return { ok: true, reply: "Done." };
 return { ok: true, reply: null };
-return { ok: true, data: { count: 3 }, reply: "Нашел 3 элемента." };
-return { ok: false, error: { code: "missing_secret", message: "OPENROUTER_API_KEY не задан" } };
+return { ok: true, data: { count: 3 }, reply: "Found 3 items." };
+return { ok: false, error: { code: "missing_secret", message: "OPENROUTER_API_KEY is not set" } };
 ```
 
-`reply: null` значит: tool завершился успешно, но в чат отвечать нечего.
+`reply: null` means the tool completed successfully but has nothing to send to the chat.
 
 Media:
 
 ```js
 return {
   ok: true,
-  reply: "Документ готов.",
+  reply: "The document is ready.",
   send: {
     kind: "file",
     url: "https://cdn.example.com/report.pdf",
-    caption: "Отчет",
+    caption: "Report",
     filename: "report.pdf"
   }
 };
 ```
 
-Поддерживаются `message`, `file`, `photo`, `video`. URL должен быть публичным `http/https`, не localhost/private IP. Для локально созданных файлов используйте `source: { type: "artifact", artifactId }`; не используйте `kind: "artifact"`.
+Supported kinds are `message`, `file`, `photo`, and `video`. The URL must use public `http/https`, not localhost or a private IP address. For locally created files, use `source: { type: "artifact", artifactId }`; do not use `kind: "artifact"`.
 
 ## Forbidden
 
-В `plugin.js` нельзя:
+The following are not allowed in `plugin.js`:
 
 - `require`;
 - `import`;
@@ -413,7 +415,7 @@ return {
 - `Worker`;
 - `eval`;
 - `Function`;
-- бесконечные циклы вида `while(true)` и `for(;;)`;
+- infinite loops such as `while(true)` and `for(;;)`;
 - Node.js APIs.
 
 ## HTTP Skill Example
@@ -423,7 +425,7 @@ export default {
   tools: {
     async openrouter_balance(ctx, args) {
       const key = ctx.api.secrets.get("OPENROUTER_API_KEY");
-      if (!key) return { ok: true, reply: "API-ключ OpenRouter не задан." };
+      if (!key) return { ok: true, reply: "The OpenRouter API key is not set." };
 
       const res = await ctx.api.http.get("https://openrouter.ai/api/v1/key", {
         headers: { Authorization: "Bearer " + key }
@@ -439,7 +441,7 @@ export default {
 
       return {
         ok: true,
-        reply: "Баланс OpenRouter\nЛимит: " + limit + "\nПотрачено: " + usage,
+        reply: "OpenRouter balance\nLimit: " + limit + "\nUsed: " + usage,
         data: account
       };
     }
@@ -468,9 +470,9 @@ SKILL_HTTP_ALLOWED_ORIGINS=https://openrouter.ai
 ## Lifecycle
 
 1. Agent creates or updates a skill via `create_skill_package`.
-2. On update, the current `plugin.js`, `SKILL.md`, and runtime manifest fields are saved to `skills/custom/<id>/revisions/v<version>/`.
+2. On update, the current `plugin.js`, `SKILL.md`, and runtime manifest fields are saved to `skills/custom/<id>/revisions/v<version>/`. The existing `enabled` flag is preserved: updates to an enabled skill take effect without enabling it again.
 3. User sets required secrets.
-4. User runs `/agentur skill enable <id>`.
+4. For a new or disabled skill, the user runs `/agentur skill enable <id>`.
 5. Enable validates and dry-runs the skill, then sets `enabled: true`.
 6. Runtime executes the package when `enabled` is true.
 7. If a recent update is broken, the agent can manually use `rollback_skill` to restore the one saved revision. The enabled flag, secrets, scoped state, and audit log are kept unchanged.

@@ -1,7 +1,9 @@
 {
-  "name": "agentur-chat-agent",
-  "version": "1.0.0",
-  "description": "Standalone file-backed Telegram group chat AI agent MVP",
+  "name": "agentur-agent",
+  "version": "2.0.0",
+  "description": "Self-hosted AI chat agent with memory, skills, mood, file-backed chat storage, scheduled tasks",
+  "license": "MIT",
+  "author": "Всеволод Беликов (https://github.com/seva8756)",
   "main": "dist/src/index.js",
   "private": true,
   "scripts": {

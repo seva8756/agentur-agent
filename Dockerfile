@@ -14,6 +14,7 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
+COPY LICENSE ./LICENSE
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/skills ./skills
